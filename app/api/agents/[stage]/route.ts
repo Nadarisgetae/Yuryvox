@@ -4,9 +4,17 @@ import {
   IDEA_ANALYST_STAGE,
   IDEA_ANALYST_PROMPT_VERSION,
   IDEA_ANALYST_SCHEMA_VERSION,
-  DEFAULT_OPENROUTER_MODEL,
+  DEFAULT_OPENROUTER_MODEL as DEFAULT_IDEA_MODEL,
   runIdeaAnalyst,
 } from '@/lib/agents/idea-analyst';
+import {
+  SCRIPTWRITER_STAGE,
+  SCRIPTWRITER_PROMPT_VERSION,
+  SCRIPTWRITER_SCHEMA_VERSION,
+  DEFAULT_SCRIPTWRITER_MODEL,
+  DEFAULT_PACING_WPM,
+  runScriptwriter,
+} from '@/lib/agents/scriptwriter';
 import type { JobConfig } from '@/lib/agents/types';
 
 export const dynamic = 'force-dynamic';
@@ -35,9 +43,22 @@ export async function GET(_request: Request, context: { params: { stage: string 
       stage: IDEA_ANALYST_STAGE,
       schema_version: IDEA_ANALYST_SCHEMA_VERSION,
       prompt_version: IDEA_ANALYST_PROMPT_VERSION,
-      default_model: DEFAULT_OPENROUTER_MODEL,
+      default_model: DEFAULT_IDEA_MODEL,
       description:
         'Researches topic and generates 3 distinct angles, proposal hooks, and sourced claims matching Agent Instructions v1.0.',
+    });
+  }
+
+  if (stage === 'scriptwriter') {
+    return NextResponse.json({
+      status: 'ready',
+      stage: SCRIPTWRITER_STAGE,
+      schema_version: SCRIPTWRITER_SCHEMA_VERSION,
+      prompt_version: SCRIPTWRITER_PROMPT_VERSION,
+      default_model: DEFAULT_SCRIPTWRITER_MODEL,
+      pacing_wpm: DEFAULT_PACING_WPM,
+      description:
+        'Turns research into a retention-optimized Vox-style explainer script with scene breakdown and pacing calibration.',
     });
   }
 
@@ -54,7 +75,7 @@ export async function GET(_request: Request, context: { params: { stage: string 
 export async function POST(request: Request, context: { params: { stage: string } }) {
   const { stage } = context.params;
 
-  if (stage !== 'idea-analyst') {
+  if (stage !== 'idea-analyst' && stage !== 'scriptwriter') {
     return NextResponse.json(
       {
         status: 'not_implemented',
@@ -94,16 +115,62 @@ export async function POST(request: Request, context: { params: { stage: string 
         : presets.jobDefaults.budget_limit_usd,
     approval_mode: rawConfig.approval_mode || presets.jobDefaults.approval_mode,
     provider_config_version: '1.0',
-    prompt_version: IDEA_ANALYST_PROMPT_VERSION,
+    prompt_version:
+      stage === 'scriptwriter' ? SCRIPTWRITER_PROMPT_VERSION : IDEA_ANALYST_PROMPT_VERSION,
     depth: rawConfig.depth || 'medium',
     user_sources: rawConfig.user_sources,
     seed: rawConfig.seed,
   };
 
-  const envelope = await runIdeaAnalyst(config, {
-    forceMock: body.forceMock,
-  });
+  if (stage === 'idea-analyst') {
+    const envelope = await runIdeaAnalyst(config, {
+      forceMock: body.forceMock,
+    });
+    const statusCode = envelope.status === 'completed' ? 200 : 400;
+    return NextResponse.json(envelope, { status: statusCode });
+  }
 
-  const statusCode = envelope.status === 'completed' ? 200 : 400;
-  return NextResponse.json(envelope, { status: statusCode });
+  if (stage === 'scriptwriter') {
+    if (!body.research) {
+      return NextResponse.json(
+        {
+          job_id: config.job_id,
+          stage: SCRIPTWRITER_STAGE,
+          status: 'needs_review',
+          schema_version: SCRIPTWRITER_SCHEMA_VERSION,
+          prompt_version: SCRIPTWRITER_PROMPT_VERSION,
+          provider: 'validation',
+          model: 'none',
+          data: null,
+          warnings: ['Missing required research payload for script generation.'],
+          errors: [
+            {
+              code: 'MISSING_RESEARCH',
+              message: 'POST /api/agents/scriptwriter requires a "research" object.',
+              retryable: false,
+              field: 'research',
+            },
+          ],
+          usage: {
+            input_tokens: null,
+            output_tokens: null,
+            estimated_cost_usd: null,
+            actual_cost_usd: null,
+          },
+        },
+        { status: 400 },
+      );
+    }
+
+    const envelope = await runScriptwriter(config, body.research, {
+      forceMock: body.forceMock,
+      approvedAngleId: body.approvedAngleId,
+      pacingWpm: body.pacingWpm,
+    });
+
+    const statusCode = envelope.status === 'completed' ? 200 : 400;
+    return NextResponse.json(envelope, { status: statusCode });
+  }
+
+  return NextResponse.json({ error: 'Unhandled stage' }, { status: 500 });
 }

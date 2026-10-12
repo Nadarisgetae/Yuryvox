@@ -122,3 +122,40 @@ export interface ResearchData {
 }
 
 export type ResearchEnvelope = StageEnvelope<ResearchData>;
+
+export type NarrativeFunction =
+  | 'hook'
+  | 'context'
+  | 'explanation'
+  | 'evidence'
+  | 'transition'
+  | 'payoff';
+
+export interface Scene {
+  scene_id: string;
+  narration: string;
+  narrative_function: NarrativeFunction;
+  claim_ids: string[];
+  on_screen_text_suggestion: string;
+  visual_concept: string;
+  pronunciation_notes?: string[];
+  sensitivity_flags?: string[];
+  estimated_seconds?: number;
+  word_count?: number;
+}
+
+export interface ScriptData {
+  title: string;
+  logline: string;
+  central_thesis: string;
+  estimated_word_count: number;
+  target_word_count: number;
+  estimated_duration_seconds: number;
+  runtime_deviation_seconds: number;
+  script: string;
+  scenes: Scene[];
+  unresolved_claims: string[];
+  editorial_notes: string[];
+}
+
+export type ScriptEnvelope = StageEnvelope<ScriptData>;
