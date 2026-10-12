@@ -1,0 +1,16 @@
+{
+  "target_seconds": 90,
+  "aspect_ratios": ["16:9"],
+  "language": "en",
+  "audience": "general audience",
+  "tone": "clear, curious, evidence-led",
+  "visual_preset": "archival_collage_explainer",
+  "music": {
+    "enabled": true,
+    "track_id": ""
+  },
+  "budget_limit_usd": 15,
+  "approval_mode": "script_and_visual_plan_before_paid_generation",
+  "provider_config_version": "1.0",
+  "prompt_version": "1.0"
+}

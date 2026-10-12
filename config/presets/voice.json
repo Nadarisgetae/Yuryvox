@@ -1,0 +1,8 @@
+{
+  "provider": "elevenlabs",
+  "voice_id": "",
+  "language": "en",
+  "stability": 0.45,
+  "similarity": 0.8,
+  "notes": "voice_id is OPEN until the operator supplies an authorized ElevenLabs voice. Do not clone a real person without consent."
+}

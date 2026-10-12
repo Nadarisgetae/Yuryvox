@@ -1,0 +1,16 @@
+{
+  "id": "archival_collage_explainer",
+  "label": "Archival collage explainer",
+  "palette": ["warm ivory", "cream", "faded beige", "charcoal", "muted ochre", "selective red"],
+  "texture": "aged paper and restrained archival wear",
+  "typography_direction": "high-contrast, clean, compositor-rendered",
+  "pacing_wpm": 145,
+  "motion_grammar": [
+    "establish context",
+    "reveal main object",
+    "add supporting evidence",
+    "highlight narrated feature",
+    "hold for reading",
+    "transition on narrative relationship"
+  ]
+}

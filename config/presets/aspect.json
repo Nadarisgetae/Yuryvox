@@ -1,0 +1,15 @@
+{
+  "defaults": ["16:9"],
+  "layouts": {
+    "16:9": {
+      "width": 1920,
+      "height": 1080,
+      "safe_margins_percent": 5
+    },
+    "9:16": {
+      "width": 1080,
+      "height": 1920,
+      "safe_margins_percent": 5
+    }
+  }
+}
