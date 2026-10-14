@@ -299,3 +299,46 @@ export interface VideoAssetsData {
 }
 
 export type VideoAssetsEnvelope = StageEnvelope<VideoAssetsData>;
+
+// ─── Agent 6: Compositor types ───
+
+export interface SilentVideoData {
+  silent_video_url: string;
+  thumbnail_url: string;
+  duration_s: number;
+  render_id: string;
+  aspect_ratio: string;
+  scene_count: number;
+  fallback_scene_ids: string[];
+  estimated_cost_usd: number;
+  actual_cost_usd: number;
+}
+
+export type SilentVideoEnvelope = StageEnvelope<SilentVideoData>;
+
+// ─── Agent 7: Audio Mastering types ───
+
+export interface FinalVideoData {
+  final_video_url: string;
+  duration_s: number;
+  loudness_lufs: number | null;
+  true_peak_dbfs: number | null;
+}
+
+export type FinalVideoEnvelope = StageEnvelope<FinalVideoData>;
+
+export interface CaptionsData {
+  srt_url: string;
+  ass_url: string;
+  sync_passed: boolean;
+}
+
+export type CaptionsEnvelope = StageEnvelope<CaptionsData>;
+
+export interface VoiceoverData {
+  voiceover_url: string;
+  duration_s: number;
+  voice_id: string;
+}
+
+export type VoiceoverEnvelope = StageEnvelope<VoiceoverData>;

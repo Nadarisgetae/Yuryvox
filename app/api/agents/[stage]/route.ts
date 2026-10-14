@@ -34,6 +34,18 @@ import {
   VIDEO_GENERATOR_SCHEMA_VERSION,
   runVideoGenerator,
 } from '@/lib/agents/video-generator';
+import {
+  COMPOSITOR_STAGE,
+  COMPOSITOR_PROMPT_VERSION,
+  COMPOSITOR_SCHEMA_VERSION,
+  runCompositor,
+} from '@/lib/agents/compositor';
+import {
+  AUDIO_MASTERING_STAGE,
+  AUDIO_MASTERING_PROMPT_VERSION,
+  AUDIO_MASTERING_SCHEMA_VERSION,
+  runAudioMastering,
+} from '@/lib/agents/audio-mastering';
 import type { JobConfig } from '@/lib/agents/types';
 
 export const dynamic = 'force-dynamic';
@@ -115,6 +127,28 @@ export async function GET(_request: Request, context: { params: { stage: string 
     });
   }
 
+  if (stage === 'compositor') {
+    return NextResponse.json({
+      status: 'ready',
+      stage: COMPOSITOR_STAGE,
+      schema_version: COMPOSITOR_SCHEMA_VERSION,
+      prompt_version: COMPOSITOR_PROMPT_VERSION,
+      description:
+        'Stitches video clips via Shotstack API with transitions, overlays, Ken Burns fallback, and music bed.',
+    });
+  }
+
+  if (stage === 'audio-mastering') {
+    return NextResponse.json({
+      status: 'ready',
+      stage: AUDIO_MASTERING_STAGE,
+      schema_version: AUDIO_MASTERING_SCHEMA_VERSION,
+      prompt_version: AUDIO_MASTERING_PROMPT_VERSION,
+      description:
+        'Generates voiceover via ElevenLabs, captions via AssemblyAI, mixes audio, and produces final MP4.',
+    });
+  }
+
   return NextResponse.json(
     {
       status: 'not_implemented',
@@ -133,7 +167,9 @@ export async function POST(request: Request, context: { params: { stage: string 
     stage !== 'scriptwriter' &&
     stage !== 'visual-ideator' &&
     stage !== 'timing-layout' &&
-    stage !== 'video-generator'
+    stage !== 'video-generator' &&
+    stage !== 'compositor' &&
+    stage !== 'audio-mastering'
   ) {
     return NextResponse.json(
       {
@@ -183,6 +219,10 @@ export async function POST(request: Request, context: { params: { stage: string 
         ? TIMING_LAYOUT_PROMPT_VERSION
         : stage === 'video-generator'
         ? VIDEO_GENERATOR_PROMPT_VERSION
+        : stage === 'compositor'
+        ? COMPOSITOR_PROMPT_VERSION
+        : stage === 'audio-mastering'
+        ? AUDIO_MASTERING_PROMPT_VERSION
         : IDEA_ANALYST_PROMPT_VERSION,
     depth: rawConfig.depth || 'medium',
     user_sources: rawConfig.user_sources,
@@ -356,6 +396,90 @@ export async function POST(request: Request, context: { params: { stage: string 
     const envelope = await runVideoGenerator(config, body.timedPlan, {
       forceMock: body.forceMock,
       falApiKey: body.falApiKey,
+    });
+
+    const statusCode = envelope.status === 'completed' ? 200 : 400;
+    return NextResponse.json(envelope, { status: statusCode });
+  }
+
+  if (stage === 'compositor') {
+    if (!body.videoAssets || !body.timedPlan) {
+      return NextResponse.json(
+        {
+          job_id: config.job_id,
+          stage: COMPOSITOR_STAGE,
+          status: 'needs_review',
+          schema_version: COMPOSITOR_SCHEMA_VERSION,
+          prompt_version: COMPOSITOR_PROMPT_VERSION,
+          provider: 'validation',
+          model: 'none',
+          data: null,
+          warnings: ['Missing required videoAssets and/or timedPlan payload for compositing.'],
+          errors: [
+            {
+              code: 'MISSING_INPUT',
+              message: 'POST /api/agents/compositor requires both "videoAssets" and "timedPlan" objects.',
+              retryable: false,
+              field: 'videoAssets,timedPlan',
+            },
+          ],
+          usage: {
+            input_tokens: null,
+            output_tokens: null,
+            estimated_cost_usd: null,
+            actual_cost_usd: null,
+          },
+        },
+        { status: 400 },
+      );
+    }
+
+    const envelope = await runCompositor(config, body.videoAssets, body.timedPlan, {
+      forceMock: body.forceMock,
+      shotstackApiKey: body.shotstackApiKey,
+      musicTrackId: body.musicTrackId,
+    });
+
+    const statusCode = envelope.status === 'completed' ? 200 : 400;
+    return NextResponse.json(envelope, { status: statusCode });
+  }
+
+  if (stage === 'audio-mastering') {
+    if (!body.silentVideo || !body.script) {
+      return NextResponse.json(
+        {
+          job_id: config.job_id,
+          stage: AUDIO_MASTERING_STAGE,
+          status: 'needs_review',
+          schema_version: AUDIO_MASTERING_SCHEMA_VERSION,
+          prompt_version: AUDIO_MASTERING_PROMPT_VERSION,
+          provider: 'validation',
+          model: 'none',
+          data: null,
+          warnings: ['Missing required silentVideo and/or script payload for audio mastering.'],
+          errors: [
+            {
+              code: 'MISSING_INPUT',
+              message: 'POST /api/agents/audio-mastering requires both "silentVideo" and "script" objects.',
+              retryable: false,
+              field: 'silentVideo,script',
+            },
+          ],
+          usage: {
+            input_tokens: null,
+            output_tokens: null,
+            estimated_cost_usd: null,
+            actual_cost_usd: null,
+          },
+        },
+        { status: 400 },
+      );
+    }
+
+    const envelope = await runAudioMastering(config, body.silentVideo, body.script, {
+      forceMock: body.forceMock,
+      elevenLabsKey: body.elevenLabsKey,
+      assemblyAiKey: body.assemblyAiKey,
     });
 
     const statusCode = envelope.status === 'completed' ? 200 : 400;
