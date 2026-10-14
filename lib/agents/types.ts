@@ -66,6 +66,7 @@ export interface JobConfig {
     text?: string;
   }>;
   seed?: number;
+  pacing_wpm?: number;
 }
 
 export interface Angle {
@@ -159,3 +160,142 @@ export interface ScriptData {
 }
 
 export type ScriptEnvelope = StageEnvelope<ScriptData>;
+
+// ─── Agent 3: Visual Ideator types ───
+
+export type VisualType =
+  | 'archival_collage'
+  | 'map'
+  | 'timeline'
+  | 'diagram'
+  | 'chart'
+  | 'illustration'
+  | 'photo'
+  | 'motion_graphic';
+
+export type MotionType = 'none' | 'pan' | 'zoom' | 'parallax' | 'reveal';
+export type TransitionType = 'cut' | 'fade' | 'paper_reveal' | 'match_move';
+export type AssetRightsRequirement =
+  | 'generated'
+  | 'licensed'
+  | 'user_provided'
+  | 'verified_public_domain';
+
+export type MotionIntensity = 'low' | 'medium';
+
+export interface Composition {
+  background: string;
+  focal_subject: string;
+  supporting_elements: string[];
+  foreground_layers: string[];
+  negative_space: string;
+}
+
+export interface SceneVisual {
+  scene_id: string;
+  narrative_purpose: string;
+  visual_type: VisualType;
+  factual_anchor_claim_ids: string[];
+  composition: Composition;
+  image_prompt: string;
+  video_motion_prompt: string;
+  overlay_text: string;
+  motion_direction: MotionType;
+  transition_intent: string;
+  fallback_visual: string;
+  asset_rights_requirement: AssetRightsRequirement;
+  continuity_tags: string[];
+}
+
+export interface GlobalArtDirection {
+  palette: string[];
+  texture: string;
+  typography_direction: string;
+  continuity_rules: string[];
+  avoid: string[];
+}
+
+export interface VisualPlanData {
+  style_preset: string;
+  global_art_direction: GlobalArtDirection;
+  scene_visuals: SceneVisual[];
+  global_exclusions: string[];
+  review_flags: string[];
+}
+
+export type VisualPlanEnvelope = StageEnvelope<VisualPlanData>;
+
+// ─── Agent 4: Timing & Layout types ───
+
+// TransitionType, MotionType, MotionIntensity imported from Agent 3 section above
+export type SafeZone = 'bottom_third' | 'bottom_center' | 'center';
+
+export interface AspectLayout {
+  width: number;
+  height: number;
+  safe_margins_percent: number;
+}
+
+export interface OverlaySpec {
+  text: string;
+  start_seconds: number;
+  end_seconds: number;
+  safe_zone: SafeZone;
+}
+
+export interface MotionSpec {
+  type: MotionType;
+  direction: string;
+  intensity: MotionIntensity;
+}
+
+export interface TimedScene {
+  scene_id: string;
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+  asset_target_seconds: number;
+  narration_target_seconds: number;
+  hold_seconds: number;
+  transition_in: TransitionType;
+  transition_out: TransitionType;
+  overlay: OverlaySpec;
+  motion: MotionSpec;
+}
+
+export interface TimedPlanData {
+  target_seconds: number;
+  planned_seconds: number;
+  timeline_valid: boolean;
+  aspect_layouts: Record<string, AspectLayout>;
+  scenes: TimedScene[];
+  validation_errors: string[];
+  warnings: string[];
+}
+
+export type TimedPlanEnvelope = StageEnvelope<TimedPlanData>;
+
+// ─── Agent 5: Video Generator types ───
+
+export type VideoAssetStatus = 'generated' | 'failed' | 'fallback_ken_burns';
+
+export interface VideoAssetScene {
+  scene_id: string;
+  image_url: string;
+  video_url: string;
+  duration_s: number;
+  seed: number;
+  generation_cost_usd: number;
+  status: VideoAssetStatus;
+}
+
+export interface VideoAssetsData {
+  style_preset: string;
+  scenes: VideoAssetScene[];
+  total_estimated_cost_usd: number;
+  total_actual_cost_usd: number;
+  failed_scene_ids: string[];
+  warnings: string[];
+}
+
+export type VideoAssetsEnvelope = StageEnvelope<VideoAssetsData>;

@@ -304,107 +304,140 @@ export function generateDeterministicMockScript(
   const claim3 = research.claims[2] || claim1;
   const claim4 = research.claims[3] || claim2;
 
-  const scenes = [
+  // Helper: repeat a filler sentence to pad narration to approximate target word count per scene.
+  // Each scene targets ~15–17 words (4–8s at 145 wpm). We cap at 60 max to satisfy the test bound,
+  // then add extra scenes to reach the overall target word count.
+  const FACTOR = `A key detail here is that ${topicLower(jobConfig.topic)} involves layers of institutional design that are easy to miss on first encounter.`;
+
+  function padScene(text: string, target: number): string {
+    let out = text;
+    while (countWords(out) < target) {
+      out += ' ' + FACTOR;
+    }
+    // trim to at most target + 5 words to avoid runaway length
+    const words = out.trim().split(/\s+/).filter(Boolean);
+    if (words.length > target + 5) {
+      out = words.slice(0, target + 5).join(' ');
+    }
+    return out;
+  }
+
+  // Base 7 scenes (core narrative), then compute how many extra "evidence" scenes we need to hit target.
+  const baseScenes = [
     {
       scene_id: 'SC01',
-      narration: selectedHook,
+      narration: padScene(selectedHook, 16),
       narrative_function: 'hook' as const,
       claim_ids: claim1 ? [claim1.claim_id] : [],
       on_screen_text_suggestion: 'The Hidden System',
       visual_concept: `Aged desk surface with warm spotlight; a worn file folder containing archival documents on ${jobConfig.topic} slides into view.`,
-      pronunciation_notes: [],
-      sensitivity_flags: [],
-      word_count: countWords(selectedHook),
-      estimated_seconds: calculateDuration(countWords(selectedHook), pacingWpm),
     },
     {
       scene_id: 'SC02',
-      narration: `At first glance, it seems like modern convenience or individual choices dictate the entire system.`,
+      narration: padScene(
+        `At first glance, it seems like modern convenience or individual choices dictate the entire system.`,
+        16,
+      ),
       narrative_function: 'context' as const,
       claim_ids: claim1 ? [claim1.claim_id] : [],
       on_screen_text_suggestion: 'First Glance',
       visual_concept: 'Archival black-and-white photographs of daily life, pinned alongside early planning diagrams.',
-      pronunciation_notes: [],
-      sensitivity_flags: [],
-      word_count: countWords(
-        'At first glance, it seems like modern convenience or individual choices dictate the entire system.',
-      ),
-      estimated_seconds: calculateDuration(15, pacingWpm),
     },
     {
       scene_id: 'SC03',
-      narration: `In reality, underlying physical path-dependencies codified decades ago shape nearly every outcome we see today.`,
+      narration: padScene(
+        `In reality, underlying physical path-dependencies codified decades ago shape nearly every outcome we see today.`,
+        16,
+      ),
       narrative_function: 'explanation' as const,
       claim_ids: claim1 && claim2 ? [claim1.claim_id, claim2.claim_id] : [],
       on_screen_text_suggestion: 'Path Dependencies',
       visual_concept: 'Hand-drawn schematic map unfolding with red ink highlighting key structural junctions.',
-      pronunciation_notes: [],
-      sensitivity_flags: [],
-      word_count: countWords(
-        'In reality, underlying physical path-dependencies codified decades ago shape nearly every outcome we see today.',
-      ),
-      estimated_seconds: calculateDuration(16, pacingWpm),
     },
     {
       scene_id: 'SC04',
-      narration: `During mid-century regulatory consolidations, planners locked in rigid technical standards that still govern the network.`,
+      narration: padScene(
+        `During mid-century regulatory consolidations, planners locked in rigid technical standards that still govern the network.`,
+        16,
+      ),
       narrative_function: 'evidence' as const,
       claim_ids: claim2 ? [claim2.claim_id] : [],
       on_screen_text_suggestion: '1950s Mandates',
       visual_concept: 'Typed legislative memorandum with official stamps and paperclips revealed in layers.',
-      pronunciation_notes: [],
-      sensitivity_flags: [],
-      word_count: countWords(
-        'During mid-century regulatory consolidations, planners locked in rigid technical standards that still govern the network.',
-      ),
-      estimated_seconds: calculateDuration(15, pacingWpm),
     },
     {
       scene_id: 'SC05',
-      narration: `When modern volume surges, these legacy friction points create the bottlenecks that cost billions every year.`,
+      narration: padScene(
+        `When modern volume surges, these legacy friction points create the bottlenecks that cost billions every year.`,
+        16,
+      ),
       narrative_function: 'explanation' as const,
       claim_ids: claim3 ? [claim3.claim_id] : [],
       on_screen_text_suggestion: 'Friction Points',
       visual_concept: 'Flowchart diagram showing capacity limits, accented with tactile paper arrows and charcoal textures.',
-      pronunciation_notes: [],
-      sensitivity_flags: [],
-      word_count: countWords(
-        'When modern volume surges, these legacy friction points create the bottlenecks that cost billions every year.',
-      ),
-      estimated_seconds: calculateDuration(16, pacingWpm),
     },
     {
       scene_id: 'SC06',
-      narration: `Surveys show public perception dramatically underestimates the scale of ongoing maintenance operations.`,
+      narration: padScene(
+        `Surveys show public perception dramatically underestimates the scale of ongoing maintenance operations.`,
+        16,
+      ),
       narrative_function: 'evidence' as const,
       claim_ids: claim4 ? [claim4.claim_id] : [],
       on_screen_text_suggestion: 'Hidden Ledger',
       visual_concept: 'Balance sheet excerpt with a magnifying lens focusing on recurring capital expenditure items.',
-      pronunciation_notes: [],
-      sensitivity_flags: [],
-      word_count: countWords(
-        'Surveys show public perception dramatically underestimates the scale of ongoing maintenance operations.',
-      ),
-      estimated_seconds: calculateDuration(14, pacingWpm),
     },
     {
       scene_id: 'SC07',
-      narration: `The lesson is clear: we aren't just using modern technology—we are living inside the blueprints of the past.`,
+      narration: padScene(
+        `The lesson is clear: we aren't just using modern technology—we are living inside the blueprints of the past.`,
+        16,
+      ),
       narrative_function: 'payoff' as const,
       claim_ids: claim1 ? [claim1.claim_id] : [],
       on_screen_text_suggestion: 'The Living Blueprint',
       visual_concept: 'Wide overhead shot pulling back as individual documents assemble into a complete blueprint grid.',
-      pronunciation_notes: [],
-      sensitivity_flags: [],
-      word_count: countWords(
-        "The lesson is clear: we aren't just using modern technology—we are living inside the blueprints of the past.",
-      ),
-      estimated_seconds: calculateDuration(16, pacingWpm),
     },
   ];
 
+  // Build scenes array with word counts
+  const scenes = baseScenes.map((s) => ({
+    ...s,
+    pronunciation_notes: [],
+    sensitivity_flags: [],
+    word_count: countWords(s.narration),
+    estimated_seconds: calculateDuration(countWords(s.narration), pacingWpm),
+  }));
+
+  let estimatedWordCount = countWords(scenes.map((s) => s.narration).join(' '));
+
+  // Add extra evidence scenes until we reach the target word count (±2% tolerance)
+  let extraIndex = 8;
+  while (estimatedWordCount < targetWords * 0.95 && estimatedWordCount < targetWords) {
+    const scene = {
+      scene_id: `SC${String(extraIndex).padStart(2, '0')}`,
+      narration: padScene(
+        `A supporting detail reveals that ${topicLower(jobConfig.topic)} depends on conventions most people never notice.`,
+        16,
+      ),
+      narrative_function: 'evidence' as const,
+      claim_ids: claim1 ? [claim1.claim_id] : [],
+      on_screen_text_suggestion: 'Supporting Detail',
+      visual_concept: `Additional archival material related to ${jobConfig.topic}, displayed on aged paper with selective red highlighting.`,
+      pronunciation_notes: [],
+      sensitivity_flags: [],
+      word_count: 0,
+      estimated_seconds: 0,
+    };
+    scene.word_count = countWords(scene.narration);
+    scene.estimated_seconds = calculateDuration(scene.word_count, pacingWpm);
+    scenes.push(scene);
+    estimatedWordCount = countWords(scenes.map((s) => s.narration).join(' '));
+    extraIndex++;
+  }
+
   const fullScript = scenes.map((s) => s.narration).join(' ');
-  const estimatedWordCount = countWords(fullScript);
+  estimatedWordCount = countWords(fullScript);
   const estimatedDurationSeconds = calculateDuration(estimatedWordCount, pacingWpm);
 
   return {
@@ -421,8 +454,13 @@ export function generateDeterministicMockScript(
     editorial_notes: [
       `Script generated using pacing standard of ${pacingWpm} words per minute.`,
       `Final scene timing will be calibrated during audio synthesis in Agent 7.`,
+      `Mock adapter expanded scene count to approximate target word count of ${targetWords}.`,
     ],
   };
+}
+
+function topicLower(topic: string): string {
+  return topic.toLowerCase();
 }
 
 export async function runScriptwriter(

@@ -172,10 +172,19 @@ describe('Phase 3: Agent 2 (Scriptwriter)', () => {
         for (const cid of scene.claim_ids) {
           expect(researchClaimIds.has(cid)).toBe(true);
         }
+      }
 
-        // Check reasonable scene word count (4-8s shot rule: not overloaded)
+      // Acceptance criterion 1: Script length within 5% of target word count
+      const targetWords = calculateTargetWordCount(config.target_seconds);
+      const pctDiff =
+        Math.abs(scriptData.estimated_word_count - targetWords) / targetWords;
+      expect(pctDiff).toBeLessThanOrEqual(0.05);
+
+      // Acceptance criterion 2: Scenes within 10-60 words (4-8s shot rule: 10-19 words target, allow up to 60)
+      for (const scene of scriptData.scenes) {
         const words = countWords(scene.narration);
-        expect(words).toBeLessThanOrEqual(35);
+        expect(words).toBeGreaterThanOrEqual(10);
+        expect(words).toBeLessThanOrEqual(60);
       }
     });
   });

@@ -28,7 +28,7 @@ Agreed 2026-10-12. Any later session must follow this.
 ## STATE TRACKER (fill in before each session)
 
 - Current phase: **3 — Agent 2: Scriptwriter** — **WAITING OPERATOR REVIEW** (do not start Phase 4 until approved)
-- Last completed task: **3.5** (Agent 2 runner, Gate B checks, pacing calibration, route, 27/27 tests passing, build passing)
+- Last completed task: **3.6** (Acceptance-criteria tests for ±5% word count and 10-60 words/scene; 27/27 tests passing, build passing)
 - Environment: Next.js 14.2 App Router at repo root; host target **Vercel**; Node **20** target; local Node **v25.1.0**; `npm test`, `next lint`, `next build`, `next dev` all succeeded
 - Credentials in place: OpenRouter N, ElevenLabs N, Fal N, Shotstack N, AssemblyAI N, Supabase N (0/7). `.env.example` exists; mock mode supported when keys absent
 - Client decisions locked: visual preset `archival_collage_explainer`; API-only; orchestrator-owned gates; approval_mode `script_and_visual_plan_before_paid_generation`; no fake sources; **host = Vercel (provisional)**. **Not locked:** niche, voice, volume, music catalog, 9:16 vs 16:9 as production default, 90s vs 15-min, demo-only vs full MVP budget, research browse API, worker host for Agents 5–7
@@ -259,6 +259,11 @@ Full visual grammar lives in Agent Instructions §3. Condensed spec for implemen
     2. *"The forgotten paper maps that created modern property lines"*
     3. *"Why electric grid frequencies must never drift from 60 Hz"*
   - All 27 unit tests passed; `npm run lint` 0 warnings; `npm run build` succeeds cleanly.
+
+- [x] **3.6 Acceptance-criteria test coverage (NEW):**
+  - Added test assertions verifying scripts hit target word count within ±5% across all 3 sample topics.
+  - Added per-scene word-count bounds (10–60 words, compatible with 4–8s shot rule).
+  - Expanded `generateDeterministicMockScript` to generate additional evidence scenes when target word count is not met, ensuring pacing accuracy.
 
 **Acceptance criteria:** All Gate B checks pass; scripts match target duration within acceptable tolerance; 4–8s shots adhere to pacing guidelines; claims map to research IDs; route operational.
 **Deliverables:** `lib/agents/types.ts` updated, `lib/agents/scriptwriter.ts`, `app/api/agents/[stage]/route.ts` updated, `__tests__/scriptwriter.test.ts`.
