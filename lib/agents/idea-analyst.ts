@@ -9,7 +9,7 @@ import { getOpenRouterKey } from '@/lib/providers/openrouter';
 export const IDEA_ANALYST_STAGE = 'idea_analyst' as const;
 export const IDEA_ANALYST_SCHEMA_VERSION = '1.0' as const;
 export const IDEA_ANALYST_PROMPT_VERSION = '1.0' as const;
-export const DEFAULT_OPENROUTER_MODEL = 'google/gemma-7b-it' as const;
+export const DEFAULT_OPENROUTER_MODEL = 'google/gemini-2.5-flash' as const;
 
 export function validateGateA(config: Partial<JobConfig>): {
   valid: boolean;
@@ -436,8 +436,9 @@ export async function runIdeaAnalyst(
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
+        response_format: { type: 'json_object' },
         temperature: 0.2,
-        max_tokens: 1500,
+        max_tokens: 4000,
         seed: config.seed,
       }),
     });
@@ -474,9 +475,22 @@ export async function runIdeaAnalyst(
     const json = await response.json();
     const content = json.choices?.[0]?.message?.content || '';
 
-    // Strip markdown code fences if model enclosed JSON in ```json ... ```
-    const cleanContent = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-    const parsedData = JSON.parse(cleanContent) as ResearchData;
+    // Strip markdown code fences or extract outer JSON braces
+    let cleanContent = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const firstBrace = cleanContent.indexOf('{');
+    const lastBrace = cleanContent.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleanContent = cleanContent.slice(firstBrace, lastBrace + 1);
+    }
+    let parsedData: ResearchData;
+    try {
+      parsedData = JSON.parse(cleanContent) as ResearchData;
+    } catch {
+      const sanitized = cleanContent.replace(/"([^"\\]*(\\.[^"\\]*)*)"/g, (match: string) => {
+        return match.replace(/\r?\n/g, '\\n').replace(/\t/g, '\\t');
+      });
+      parsedData = JSON.parse(sanitized) as ResearchData;
+    }
 
     const validation = validateResearchOutput(parsedData);
     if (!validation.valid) {

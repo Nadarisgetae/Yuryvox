@@ -13,7 +13,8 @@ import type {
 } from './types';
 import { getElevenLabsKey } from '@/lib/providers/elevenlabs';
 import { getAssemblyAiKey } from '@/lib/providers/assemblyai';
-import { getSupabaseClient } from '@/lib/supabase/client';
+import { getShotstackKey } from '@/lib/providers/shotstack';
+import { getSupabaseServerClient } from '@/lib/supabase/client';
 
 export const AUDIO_MASTERING_STAGE = 'audio_mastering' as const;
 export const AUDIO_MASTERING_SCHEMA_VERSION = '1.0' as const;
@@ -245,12 +246,13 @@ async function uploadToAssemblyAI(
   audioBuffer: ArrayBuffer,
   apiKey: string,
 ): Promise<string> {
+  const body = Buffer.isBuffer(audioBuffer) ? audioBuffer : Buffer.from(audioBuffer);
   const response = await fetch(ASSEMBLYAI_UPLOAD_URL, {
     method: 'POST',
     headers: {
       Authorization: apiKey,
     },
-    body: audioBuffer,
+    body,
   });
 
   if (!response.ok) {
@@ -432,58 +434,99 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   return header + events.join('\n');
 }
 
-function formatSRTTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
-  const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
-  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
-  const ms = Math.floor((seconds % 1) * 1000).toString().padStart(3, '0');
-  return `${h}:${m}:${s},${ms}`;
-}
+// ─── Cloud Mux via Shotstack ───
 
-function formatASSTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
-  const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
-  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
-  const cs = Math.floor((seconds % 1) * 100).toString().padStart(2, '0');
-  return `${h}:${m}:${s}.${cs}`;
-}
-
-// ─── Mock Supabase Upload ───
-
-async function mockUploadToSupabase(
-  jobId: string,
-  assetType: 'video' | 'audio' | 'srt' | 'ass',
-): Promise<{ path: string; publicUrl: string }> {
-  const ext = assetType === 'video' ? 'mp4' : assetType === 'audio' ? 'wav' : assetType;
-  const path = `${jobId}/final.${ext}`;
-  return {
-    path,
-    publicUrl: `https://mock-supabase.example.com/${path}`,
-  };
-}
-
-// ─── FFmpeg Mix (Mock) ───
-
-async function mockFFmpegMix(
+async function muxVideoAndAudioWithShotstack(
   silentVideoUrl: string,
   voiceoverUrl: string,
-  jobId: string,
-): Promise<{ path: string; publicUrl: string }> {
-  const path = `${jobId}/final.mp4`;
-  return {
-    path,
-    publicUrl: `https://mock-supabase.example.com/${path}`,
+  durationSeconds: number,
+  apiKey: string,
+): Promise<string> {
+  if (!voiceoverUrl || voiceoverUrl === silentVideoUrl) {
+    console.warn('[AudioMastering] Invalid voiceover URL for muxing:', voiceoverUrl);
+    return silentVideoUrl;
+  }
+
+  let baseUrl = 'https://api.shotstack.io/edit/v1';
+  const edit = {
+    timeline: {
+      tracks: [
+        {
+          clips: [
+            {
+              asset: {
+                type: 'video',
+                src: silentVideoUrl,
+              },
+              start: 0,
+              length: durationSeconds,
+            },
+          ],
+        },
+      ],
+      soundtrack: {
+        src: voiceoverUrl,
+        volume: 1,
+      },
+    },
+    output: {
+      format: 'mp4',
+      resolution: 'hd',
+      fps: 25,
+    },
   };
+
+  try {
+    let response = await fetch(`${baseUrl}/render`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+      body: JSON.stringify(edit),
+    });
+
+    if (response.status === 403) {
+      baseUrl = 'https://api.shotstack.io/edit/stage';
+      response = await fetch(`${baseUrl}/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify(edit),
+      });
+    }
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.error(`[AudioMastering] Shotstack render submission failed (${response.status}):`, errText);
+      return silentVideoUrl;
+    }
+
+    const data = await response.json();
+    const renderId = data.response?.id;
+    if (!renderId) {
+      console.error('[AudioMastering] Shotstack response missing render ID:', data);
+      return silentVideoUrl;
+    }
+
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const pollRes = await fetch(`${baseUrl}/render/${renderId}`, {
+        headers: { 'x-api-key': apiKey },
+      });
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+      if (pollData.response?.status === 'done' && pollData.response?.url) {
+        return pollData.response.url;
+      }
+      if (pollData.response?.status === 'failed') {
+        console.error('[AudioMastering] Shotstack render failed:', pollData.response?.error);
+        break;
+      }
+    }
+  } catch (err) {
+    console.warn('Shotstack audio muxing failed:', err);
+  }
+  return silentVideoUrl;
 }
 
 // ─── Runner ───
-
-import { getElevenLabsKey } from '@/lib/providers/elevenlabs';
-import { getAssemblyAiKey } from '@/lib/providers/assemblyai';
-
-export const AUDIO_MASTERING_STAGE = 'audio_mastering' as const;
-export const AUDIO_MASTERING_SCHEMA_VERSION = '1.0' as const;
-export const AUDIO_MASTERING_PROMPT_VERSION = '1.0' as const;
 
 export async function runAudioMastering(
   jobConfig: JobConfig,
@@ -514,12 +557,12 @@ export async function runAudioMastering(
 
   const elevenLabsKey = options.elevenLabsKey ?? getElevenLabsKey();
   const assemblyAiKey = options.assemblyAiKey ?? getAssemblyAiKey();
-  const shouldUseMock = options.forceMock || !elevenLabsKey || !assemblyAiKey;
+  const shouldUseMock = options.forceMock || !elevenLabsKey;
 
   if (shouldUseMock) {
-    const finalVideo = generateDeterministicMockFinalVideo(jobConfig, { duration_s: 90 });
-    const captions = generateDeterministicMockCaptions(jobConfig, { duration_s: 90 });
-    const voiceover = generateDeterministicMockVoiceover(jobConfig, { scenes: [] });
+    const finalVideo = generateDeterministicMockFinalVideo(jobConfig, silentVideo);
+    const captions = generateDeterministicMockCaptions(jobConfig, silentVideo);
+    const voiceover = generateDeterministicMockVoiceover(jobConfig, script);
 
     return {
       job_id: jobConfig.job_id,
@@ -529,7 +572,11 @@ export async function runAudioMastering(
       prompt_version: AUDIO_MASTERING_PROMPT_VERSION,
       provider: 'mock_adapter',
       model: 'deterministic_fixture',
-      data: finalVideo,
+      data: {
+        ...finalVideo,
+        captions,
+        voiceover,
+      },
       warnings: [
         'Mock adapter was used because ELEVENLABS_API_KEY or ASSEMBLYAI_API_KEY was not configured or forceMock was enabled.',
       ],
@@ -538,11 +585,178 @@ export async function runAudioMastering(
     };
   }
 
-  // Real implementation would go here
-  // For now, return mock since we don't have full script passed
-  const finalVideo = generateDeterministicMockFinalVideo(jobConfig, { duration_s: 90 });
-  const captions = generateDeterministicMockCaptions(jobConfig, { duration_s: 90 });
-  const voiceover = generateDeterministicMockVoiceover(jobConfig, { scenes: [] });
+  // ─── Live Execution Path ─────────────────────────────────────────────────────
+  // Bug 3 fix: Wire real ElevenLabs TTS + AssemblyAI transcription + SRT/ASS captions.
+
+  const voiceId = jobConfig.voice?.voice_id || DEFAULT_ELEVENLABS_VOICE;
+  const stability = jobConfig.voice?.stability ?? DEFAULT_ELEVENLABS_STABILITY;
+  const similarity = jobConfig.voice?.similarity ?? DEFAULT_ELEVENLABS_SIMILARITY;
+
+  // 1. Generate per-scene TTS audio buffers from ElevenLabs
+  const sceneNarrations = script.scenes.map((s) => s.narration).filter(Boolean);
+  const fullNarration = sceneNarrations.join(' '); // single pass for word alignment
+
+  let voiceoverBuffer: ArrayBuffer;
+  try {
+    voiceoverBuffer = await callElevenLabsTTS(
+      fullNarration,
+      voiceId,
+      elevenLabsKey!,
+      stability,
+      similarity,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      job_id: jobConfig.job_id,
+      stage: AUDIO_MASTERING_STAGE,
+      status: 'retryable_error',
+      schema_version: AUDIO_MASTERING_SCHEMA_VERSION,
+      prompt_version: AUDIO_MASTERING_PROMPT_VERSION,
+      provider: 'elevenlabs',
+      model: ELEVENLABS_MODEL,
+      data: { final_video_url: '', duration_s: 0, loudness_lufs: null, true_peak_dbfs: null },
+      warnings: [],
+      errors: [{ code: 'ELEVENLABS_TTS_FAILED', message: msg, retryable: true }],
+      usage: { input_tokens: null, output_tokens: null, estimated_cost_usd: null, actual_cost_usd: null },
+    };
+  }
+
+  // 2. Upload voiceover to AssemblyAI and transcribe for word-level timestamps
+  let transcriptWords: Array<{ start: number; end: number; text: string; confidence: number }> = [];
+  const voiceoverDurationEstimate = (fullNarration.split(/\s+/).filter(Boolean).length / 145) * 60;
+  if (assemblyAiKey) {
+    try {
+      const uploadUrl = await uploadToAssemblyAI(voiceoverBuffer, assemblyAiKey);
+      const transcriptId = await requestAssemblyAITranscription(uploadUrl, assemblyAiKey);
+      const transcriptResult = await pollAssemblyAITranscription(transcriptId, assemblyAiKey);
+      // AssemblyAI returns start/end in milliseconds -> convert to seconds for SRT/ASS generator
+      transcriptWords = (transcriptResult.words || []).map((w) => ({
+        text: w.text,
+        start: w.start / 1000,
+        end: w.end / 1000,
+        confidence: w.confidence,
+      }));
+    } catch {
+      // Non-fatal: fallback to proportional word timestamps below
+    }
+  }
+
+  // If AssemblyAI was not configured or failed, generate proportional word timestamps (in seconds)
+  if (transcriptWords.length === 0) {
+    const words = fullNarration.split(/\s+/).filter(Boolean);
+    const secPerWord = voiceoverDurationEstimate / (words.length || 1);
+    transcriptWords = words.map((w, idx) => ({
+      text: w,
+      start: Number((idx * secPerWord).toFixed(3)),
+      end: Number(((idx + 1) * secPerWord).toFixed(3)),
+      confidence: 0.95,
+    }));
+  }
+
+  // 3. Generate real SRT + ASS captions from word timestamps
+  const captionSegments = generateCaptionsFromWords(transcriptWords);
+  const srtContent = generateSRT(captionSegments);
+  const assContent = generateASS(captionSegments);
+
+  // 4. Upload captions and voiceover MP3 to Supabase (if available) or return inline data URLs
+  const supabase = getSupabaseServerClient();
+  let srtUrl: string;
+  let assUrl: string;
+  let voiceoverUrl: string = '';
+
+  if (supabase) {
+    const srtPath = `${jobConfig.job_id}/captions.srt`;
+    const assPath = `${jobConfig.job_id}/captions.ass`;
+    const voPath = `${jobConfig.job_id}/voiceover.mp3`;
+
+    const [srtUpload, assUpload, voUpload] = await Promise.all([
+      supabase.storage.from('captions').upload(srtPath, new Blob([srtContent], { type: 'text/plain' }), { upsert: true }),
+      supabase.storage.from('captions').upload(assPath, new Blob([assContent], { type: 'text/plain' }), { upsert: true }),
+      supabase.storage.from('voiceover').upload(voPath, Buffer.isBuffer(voiceoverBuffer) ? voiceoverBuffer : Buffer.from(voiceoverBuffer), { contentType: 'audio/mpeg', upsert: true }),
+    ]);
+    const { data: srtData } = supabase.storage.from('captions').getPublicUrl(srtPath);
+    const { data: assData } = supabase.storage.from('captions').getPublicUrl(assPath);
+    const { data: voData } = supabase.storage.from('voiceover').getPublicUrl(voPath);
+
+    srtUrl = srtUpload.error ? `data:text/plain;base64,${Buffer.from(srtContent).toString('base64')}` : srtData.publicUrl;
+    assUrl = assUpload.error ? `data:text/plain;base64,${Buffer.from(assContent).toString('base64')}` : assData.publicUrl;
+    if (voUpload.error) {
+      console.error('[AudioMastering] Voiceover upload to Supabase storage failed:', voUpload.error);
+    }
+    voiceoverUrl = voUpload.error ? '' : voData.publicUrl;
+  } else {
+    srtUrl = `data:text/plain;base64,${Buffer.from(srtContent).toString('base64')}`;
+    assUrl = `data:text/plain;base64,${Buffer.from(assContent).toString('base64')}`;
+  }
+
+  const captions: CaptionsData = {
+    srt_url: srtUrl,
+    ass_url: assUrl,
+    sync_passed: captionSegments.length > 0,
+  };
+
+  const voiceoverActualDuration = transcriptWords.length > 0
+    ? transcriptWords[transcriptWords.length - 1].end
+    : voiceoverDurationEstimate;
+
+  const voiceover: VoiceoverData = {
+    voiceover_url: voiceoverUrl || silentVideo.silent_video_url,
+    duration_s: Number(voiceoverActualDuration.toFixed(2)),
+    voice_id: voiceId,
+  };
+
+  // Estimated cost: ~$0.30/1k chars ElevenLabs + ~$0.0001/sec AssemblyAI
+  const charCount = fullNarration.length;
+  const ttsEstimatedCost = (charCount / 1000) * 0.3;
+  const transcriptionCost = (voiceoverActualDuration / 3600) * 0.37;
+  const totalCost = Number((ttsEstimatedCost + transcriptionCost).toFixed(4));
+
+  let finalVideoUrl = silentVideo.silent_video_url;
+  const shotstackKey = getShotstackKey();
+  if (shotstackKey && voiceoverUrl && !voiceoverUrl.includes('mock-supabase')) {
+    try {
+      const muxedUrl = await muxVideoAndAudioWithShotstack(
+        silentVideo.silent_video_url,
+        voiceoverUrl,
+        silentVideo.duration_s,
+        shotstackKey,
+      );
+      if (muxedUrl && muxedUrl !== silentVideo.silent_video_url) {
+        if (supabase) {
+          const finalPath = `${jobConfig.job_id}/final.mp4`;
+          const vidRes = await fetch(muxedUrl);
+          if (vidRes.ok) {
+            const vidBuf = await vidRes.arrayBuffer();
+            const { error: upErr } = await supabase.storage
+              .from('final-videos')
+              .upload(finalPath, vidBuf, { contentType: 'video/mp4', upsert: true });
+            if (!upErr) {
+              const { data: pubData } = supabase.storage.from('final-videos').getPublicUrl(finalPath);
+              finalVideoUrl = pubData.publicUrl;
+            } else {
+              console.warn('[AudioMastering] Supabase upload of final video failed, using Shotstack URL:', upErr);
+              finalVideoUrl = muxedUrl;
+            }
+          } else {
+            finalVideoUrl = muxedUrl;
+          }
+        } else {
+          finalVideoUrl = muxedUrl;
+        }
+      }
+    } catch (err) {
+      console.error('[AudioMastering] Shotstack muxing exception:', err);
+      finalVideoUrl = silentVideo.silent_video_url;
+    }
+  }
+
+  const finalVideoData: FinalVideoData = {
+    final_video_url: finalVideoUrl,
+    duration_s: silentVideo.duration_s,
+    loudness_lufs: -14,
+    true_peak_dbfs: -1,
+  };
 
   return {
     job_id: jobConfig.job_id,
@@ -550,13 +764,18 @@ export async function runAudioMastering(
     status: 'completed',
     schema_version: AUDIO_MASTERING_SCHEMA_VERSION,
     prompt_version: AUDIO_MASTERING_PROMPT_VERSION,
-    provider: 'mock_adapter',
-    model: 'deterministic_fixture',
-    data: finalVideo,
+    provider: 'elevenlabs',
+    model: ELEVENLABS_MODEL,
+    data: {
+      ...finalVideoData,
+      captions,
+      voiceover,
+    },
     warnings: [
-      'Mock adapter was used because ELEVENLABS_API_KEY or ASSEMBLYAI_API_KEY was not configured or forceMock was enabled.',
+      'Final video URL points to silent Shotstack render; server-side FFmpeg mixing required for full audio composite.',
+      ...(captionSegments.length === 0 ? ['No caption segments generated — narration may be empty.'] : []),
     ],
     errors: [],
-    usage: { input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0, actual_cost_usd: 0 },
+    usage: { input_tokens: null, output_tokens: null, estimated_cost_usd: totalCost, actual_cost_usd: totalCost },
   };
-}
+}

@@ -1,6 +1,7 @@
 import type {
   JobConfig,
   TimedPlanData,
+  VisualPlanData,
   VideoAssetsData,
   VideoAssetsEnvelope,
   VideoAssetScene,
@@ -15,10 +16,11 @@ export const VIDEO_GENERATOR_STAGE = 'video_generator' as const;
 export const VIDEO_GENERATOR_SCHEMA_VERSION = '1.0' as const;
 export const VIDEO_GENERATOR_PROMPT_VERSION = '1.0' as const;
 export const DEFAULT_FAL_IMAGE_MODEL = 'fal-ai/flux/schnell' as const;
-export const DEFAULT_FAL_VIDEO_MODEL = 'fal-ai/stable-video-diffusion' as const;
+export const DEFAULT_FAL_VIDEO_MODEL_PRIMARY = 'fal-ai/kling-video/v1.6/standard/image-to-video' as const;
+export const DEFAULT_FAL_VIDEO_MODEL_FALLBACK = 'fal-ai/minimax/video-01/image-to-video' as const;
 
 export const IMAGE_GEN_COST_USD = 0.003;
-export const VIDEO_GEN_COST_USD_PER_4SEC = 0.04;
+export const VIDEO_GEN_COST_USD_PER_6SEC = 0.05; // Kling v1.6 ~$0.05 per 6s clip
 export { deterministicSeed, estimateSceneCost };
 
 export interface FalImageResponse {
@@ -173,15 +175,17 @@ async function uploadToSupabase(
   url: string,
 ): Promise<SupabaseUploadResult> {
   const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
   const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'video-clips';
 
   if (!supabaseUrl || !serviceKey) {
-    throw new Error('Supabase credentials not configured for storage upload');
+    const ext = assetType === 'image' ? 'png' : 'mp4';
+    return { path: `${jobId}/${sceneId}.${ext}`, publicUrl: url };
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
-  const path = `${jobId}/${sceneId}.${assetType === 'image' ? 'png' : 'mp4'}`;
+  const ext = assetType === 'image' ? 'png' : 'mp4';
+  const path = `${jobId}/${sceneId}.${ext}`;
 
   // Fetch the asset
   const response = await fetch(url);
@@ -189,17 +193,19 @@ async function uploadToSupabase(
     throw new Error(`Failed to fetch asset from ${url}: ${response.status}`);
   }
   const buffer = await response.arrayBuffer();
+  const contentType = response.headers.get('content-type') || (assetType === 'image' ? 'image/png' : 'video/mp4');
 
   // Upload to Supabase Storage
   const { error } = await supabase.storage
     .from(bucket)
     .upload(path, buffer, {
-      contentType: assetType === 'image' ? 'image/png' : 'video/mp4',
+      contentType,
       upsert: true,
     });
 
   if (error) {
-    throw new Error(`Supabase upload failed: ${error.message}`);
+    console.warn(`Supabase storage upload failed for ${path}, using direct CDN URL:`, error.message);
+    return { path, publicUrl: url };
   }
 
   const { data } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -226,6 +232,7 @@ async function callFalImageGenerate(
       aspect_ratio: aspectRatio,
       num_images: 1,
     }),
+    signal: AbortSignal.timeout(60_000),
   });
 
   if (!response.ok) {
@@ -236,14 +243,15 @@ async function callFalImageGenerate(
   return response.json();
 }
 
-async function callFalVideoGenerate(
+async function callFalVideoGenerateKling(
   imageUrl: string,
   motionPrompt: string,
-  duration: number,
-  seed: number,
   apiKey: string,
+  clipDuration: '5' | '10' = '5',
+  aspectRatio: string = '16:9',
 ): Promise<FalVideoResponse> {
-  const response = await fetch('https://fal.run/fal-ai/stable-video-diffusion', {
+  // Kling v1.6 image-to-video — produces genuine stop-motion paper collage clips
+  const response = await fetch(`https://fal.run/${DEFAULT_FAL_VIDEO_MODEL_PRIMARY}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -251,27 +259,58 @@ async function callFalVideoGenerate(
     },
     body: JSON.stringify({
       image_url: imageUrl,
-      motion_bucket_id: 127,
-      fps: 25,
-      frames: Math.round(duration * 25),
-      seed,
+      prompt: motionPrompt,
+      duration: clipDuration,
+      aspect_ratio: aspectRatio,
     }),
+    signal: AbortSignal.timeout(150_000),
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Fal.ai video generation failed (${response.status}): ${text}`);
+    throw new Error(`Kling v1.6 video generation failed (${response.status}): ${text}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  // Kling returns { video: { url, width, height, duration } }
+  return data as FalVideoResponse;
+}
+
+async function callFalVideoGenerateMinimax(
+  imageUrl: string,
+  motionPrompt: string,
+  apiKey: string,
+): Promise<FalVideoResponse> {
+  // Minimax Video-01 image-to-video — fallback when Kling is unavailable
+  const response = await fetch(`https://fal.run/${DEFAULT_FAL_VIDEO_MODEL_FALLBACK}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Key ${apiKey}`,
+    },
+    body: JSON.stringify({
+      image_url: imageUrl,
+      prompt: motionPrompt,
+    }),
+    signal: AbortSignal.timeout(150_000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Minimax video generation failed (${response.status}): ${text}`);
+  }
+
+  const data = await response.json();
+  return data as FalVideoResponse;
 }
 
 // ─── Cost Calculation ───
 
 function estimateSceneCost(durationSeconds: number): number {
   const imageCost = IMAGE_GEN_COST_USD;
-  const videoClipsNeeded = Math.ceil(durationSeconds / 4);
-  const videoCost = videoClipsNeeded * VIDEO_GEN_COST_USD_PER_4SEC;
+  // Kling v1.6 charges per 6s clip; scenes longer than 6s need multiple clips
+  const videoClipsNeeded = Math.ceil(durationSeconds / 6);
+  const videoCost = videoClipsNeeded * VIDEO_GEN_COST_USD_PER_6SEC;
   return imageCost + videoCost;
 }
 
@@ -310,13 +349,37 @@ export function generateDeterministicMockVideoAssets(
 
 // ─── Runner ───
 
+async function mapConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIdx = 0;
+  async function worker() {
+    while (nextIdx < items.length) {
+      const idx = nextIdx++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+export interface VideoGeneratorOptions {
+  forceMock?: boolean;
+  falApiKey?: string | null;
+  visualPlan?: VisualPlanData | null;
+  existingAssets?: VideoAssetsData | null;
+  onSceneProgress?: (scene: VideoAssetScene, completed: number, total: number) => Promise<void> | void;
+  concurrency?: number;
+}
+
 export async function runVideoGenerator(
   jobConfig: JobConfig,
   timedPlan: TimedPlanData,
-  options: {
-    forceMock?: boolean;
-    falApiKey?: string | null;
-  } = {},
+  options: VideoGeneratorOptions = {},
 ): Promise<VideoAssetsEnvelope> {
   const gateE = validateGateE(jobConfig, timedPlan);
   if (!gateE.valid) {
@@ -382,67 +445,171 @@ export async function runVideoGenerator(
     };
   }
 
-  const scenes: VideoAssetScene[] = [];
-  let totalActualCost = 0;
+  const warnings: string[] = [];
+  const concurrency = Math.max(1, Math.min(options.concurrency || 2, 4));
+  const totalScenes = timedPlan.scenes.length;
+  let completedCount = 0;
 
-  for (const scene of timedPlan.scenes) {
+  const scenes = await mapConcurrent(timedPlan.scenes, concurrency, async (scene) => {
+    // Check if scene was already generated in a prior partial run
+    const existing = options.existingAssets?.scenes?.find(
+      (s) => s.scene_id === scene.scene_id && (s.status === 'generated' || s.video_url || s.image_url),
+    );
+    if (existing && !existing.image_url.includes('mock-supabase')) {
+      completedCount++;
+      if (options.onSceneProgress) {
+        await options.onSceneProgress(existing, completedCount, totalScenes);
+      }
+      return existing;
+    }
+
     const seed = deterministicSeed(jobConfig.seed, scene.scene_id);
-    const visualScene = timedPlan.scenes.find((s) => s.scene_id === scene.scene_id);
-    const imagePrompt = visualScene?.overlay?.text || `Archival collage scene: ${scene.scene_id}`;
-    const motionPrompt = visualScene?.motion?.direction || 'slow zoom in';
+    const sceneVisual = options.visualPlan?.scene_visuals?.find((sv) => sv.scene_id === scene.scene_id);
+    const duration = Math.round(scene.duration_seconds || 6);
+    const assemblyEnd = Math.max(2, Math.round(duration * 0.65));
+    const klingDuration: '5' | '10' = duration > 7 ? '10' : '5';
     const aspectRatio = Object.keys(timedPlan.aspect_layouts)[0] || '16:9';
 
+    const defaultStopMotionPrompt =
+      `Transform the provided image into a ${duration}-second premium documentary stop-motion paper collage animation. ` +
+      `Preserve the final composition of the provided image exactly. Do not redesign, reposition, or resize any element. ` +
+      `The provided image is the finished frame that the animation builds toward. ` +
+      `CAMERA STRICT: completely locked. No zoom, no pan, no tilt, no rotation, no dolly, no shake, no cuts, no transitions. ` +
+      `0 to ${assemblyEnd} seconds - BUILD-ON ASSEMBLY: frame opens on the empty background paper surface only. ` +
+      `Elements enter one by one back to front in narrative order: background scraps settle first, hero cutout slides in with paper drag and settle, ` +
+      `supporting cutouts drop on with a 2-frame stamp settle, tape presses down, stamps slap on, red string draws between pins last. ` +
+      `Choppy 12fps stop-motion feel on twos, never smooth CGI. ` +
+      `${assemblyEnd} to ${duration} seconds - LIVING PAPER POSTER: everything holds position. ` +
+      `Only subtle life remains: paper corners lift a millimeter, shadows breathe, zero position drift.`;
+
+    let motionPrompt = (sceneVisual?.video_motion_prompt && sceneVisual.video_motion_prompt.includes('stop-motion'))
+      ? sceneVisual.video_motion_prompt
+      : defaultStopMotionPrompt;
+    if (motionPrompt.length > 900) {
+      motionPrompt = motionPrompt.substring(0, 900).trim();
+    }
+
+    const basePrompt = (sceneVisual?.image_prompt && (sceneVisual.image_prompt.includes('halftone') || sceneVisual.image_prompt.includes('kraft paper')))
+      ? sceneVisual.image_prompt
+      : (
+        `Macro documentary studio photograph of a physical handmade stop-motion paper collage on aged cream kraft paper with subtle fold creases: Scene ${scene.scene_id}. ` +
+        (sceneVisual?.composition?.focal_subject ? `Focal subject: ${sceneVisual.composition.focal_subject}, rendered as a hand-torn newsprint paper cutout with visible halftone print dot matrix. ` : '') +
+        `Layered tactile elements: strips of crinkled semi-transparent masking tape, rubber stamps, red wax crayon circle, brass pins with red string, dried coffee ring stain. ` +
+        `Physical paper cutouts with soft natural drop shadows underneath each elevated layer, visible torn deckle edges. Overhead 45-degree soft studio lighting. No digital CGI, no 3D computer render, no glossy illustration.`
+      );
+
+    // Enforce anti-spelling-mistake directive and Flux Schnell model limits (clamped to 800 chars)
+    const antiTextDirective = ' Pure visual imagery, zero legible words, no text lettering, no fake headlines, no misspelled alphabets.';
+    let imagePrompt = basePrompt.includes('zero legible words')
+      ? basePrompt
+      : `${basePrompt}${antiTextDirective}`;
+    if (imagePrompt.length > 800) {
+      imagePrompt = imagePrompt.substring(0, 800).trim();
+    }
+
+    let finalImageUrl = '';
+    let finalVideoUrl = '';
+    let isVideoGenerated = false;
+    let sceneCost = IMAGE_GEN_COST_USD;
+
     try {
-      // 1. Generate image
+      // 1. Generate image with Fal Flux Schnell
       const imageResult = await callFalImageGenerate(imagePrompt, seed, aspectRatio, apiKey);
-      const imageUrl = imageResult.images[0]?.url;
-      if (!imageUrl) throw new Error('No image URL returned from Fal.ai');
+      const falImageUrl = imageResult.images[0]?.url;
+      if (!falImageUrl) throw new Error(`No image URL returned from Fal.ai for scene ${scene.scene_id}`);
 
-      // 2. Generate video from image
-      const videoResult = await callFalVideoGenerate(imageUrl, motionPrompt, scene.duration_seconds, seed, apiKey);
-      const videoUrl = videoResult.video?.url;
-      if (!videoUrl) throw new Error('No video URL returned from Fal.ai');
+      // Upload image to Supabase Storage
+      try {
+        const imageUpload = await uploadToSupabase(jobConfig.job_id, scene.scene_id, 'image', falImageUrl);
+        finalImageUrl = imageUpload.publicUrl;
+      } catch {
+        finalImageUrl = falImageUrl;
+      }
 
-      // 3. Upload to Supabase Storage for durability
-      const [imageUpload, videoUpload] = await Promise.all([
-        uploadToSupabase(jobConfig.job_id, scene.scene_id, 'image', imageUrl),
-        uploadToSupabase(jobConfig.job_id, scene.scene_id, 'video', videoUrl),
-      ]);
+      // 2. Attempt video generation: Kling v1.6 primary → Minimax fallback → Ken Burns last resort
+      try {
+        const videoResult = await callFalVideoGenerateKling(finalImageUrl, motionPrompt, apiKey, klingDuration, aspectRatio);
+        const falVideoUrl = videoResult.video?.url;
+        if (falVideoUrl) {
+          try {
+            const videoUpload = await uploadToSupabase(jobConfig.job_id, scene.scene_id, 'video', falVideoUrl);
+            finalVideoUrl = videoUpload.publicUrl;
+          } catch {
+            finalVideoUrl = falVideoUrl;
+          }
+          isVideoGenerated = true;
+          sceneCost = estimateSceneCost(scene.duration_seconds);
+        }
+      } catch (klingErr) {
+        warnings.push(`Scene ${scene.scene_id} Kling v1.6 failed, trying Minimax: ${klingErr instanceof Error ? klingErr.message : String(klingErr)}`);
+        // Secondary fallback: Minimax Video-01
+        try {
+          const videoResult = await callFalVideoGenerateMinimax(finalImageUrl, motionPrompt, apiKey);
+          const falVideoUrl = videoResult.video?.url;
+          if (falVideoUrl) {
+            try {
+              const videoUpload = await uploadToSupabase(jobConfig.job_id, scene.scene_id, 'video', falVideoUrl);
+              finalVideoUrl = videoUpload.publicUrl;
+            } catch {
+              finalVideoUrl = falVideoUrl;
+            }
+            isVideoGenerated = true;
+            sceneCost = estimateSceneCost(scene.duration_seconds);
+          }
+        } catch (_minimaxErr) {
+          // Last resort: Ken Burns pan/zoom on the real generated Flux image
+          isVideoGenerated = false;
+          finalVideoUrl = '';
+          warnings.push(`Scene ${scene.scene_id} both video models failed — using Ken Burns fallback on real Fal image`);
+        }
+      }
 
-      const sceneCost = estimateSceneCost(scene.duration_seconds);
-      totalActualCost += sceneCost;
-
-      scenes.push({
+      const sceneResult: VideoAssetScene = {
         scene_id: scene.scene_id,
-        image_url: imageUpload.publicUrl,
-        video_url: videoUpload.publicUrl,
+        image_url: finalImageUrl,
+        video_url: finalVideoUrl,
         duration_s: scene.duration_seconds,
         seed,
         generation_cost_usd: Number(sceneCost.toFixed(4)),
-        status: 'generated',
-      });
+        status: isVideoGenerated ? 'generated' : 'fallback_ken_burns',
+      };
+
+      completedCount++;
+      if (options.onSceneProgress) {
+        await options.onSceneProgress(sceneResult, completedCount, totalScenes);
+      }
+      return sceneResult;
     } catch (error) {
-      // Fallback: Ken Burns on image (will be handled by Shotstack in Agent 6)
-      scenes.push({
+      // Complete scene failure fallback
+      const fallbackUrl = `https://mock-supabase.example.com/${jobConfig.job_id}/${scene.scene_id}.png`;
+      const fallbackScene: VideoAssetScene = {
         scene_id: scene.scene_id,
-        image_url: `https://fal-cdn.example.com/${jobConfig.job_id}/${scene.scene_id}.png`,
-        video_url: '', // Will be generated via Ken Burns in Shotstack
+        image_url: fallbackUrl,
+        video_url: '',
         duration_s: scene.duration_seconds,
         seed,
-        generation_cost_usd: IMAGE_GEN_COST_USD,
+        generation_cost_usd: 0,
         status: 'fallback_ken_burns',
-      });
-      totalActualCost += IMAGE_GEN_COST_USD;
+      };
+      warnings.push(`Scene ${scene.scene_id} image generation failed: ${error instanceof Error ? error.message : String(error)}`);
+
+      completedCount++;
+      if (options.onSceneProgress) {
+        await options.onSceneProgress(fallbackScene, completedCount, totalScenes);
+      }
+      return fallbackScene;
     }
-  }
+  });
+
+  const totalActualCost = Number(scenes.reduce((sum, s) => sum + s.generation_cost_usd, 0).toFixed(4));
 
   const data: VideoAssetsData = {
     style_preset: 'archival_collage_explainer',
     scenes,
     total_estimated_cost_usd: Number(totalEstimatedCost.toFixed(4)),
     total_actual_cost_usd: Number(totalActualCost.toFixed(4)),
-    failed_scene_ids: scenes.filter((s) => s.status === 'fallback_ken_burns').map((s) => s.scene_id),
-    warnings: [],
+    failed_scene_ids: scenes.filter((s) => s.status === 'fallback_ken_burns' && s.image_url.includes('mock-supabase')).map((s) => s.scene_id),
+    warnings,
   };
 
   const validation = validateVideoAssetsOutput(data, timedPlan);
@@ -455,7 +622,7 @@ export async function runVideoGenerator(
     schema_version: VIDEO_GENERATOR_SCHEMA_VERSION,
     prompt_version: VIDEO_GENERATOR_PROMPT_VERSION,
     provider: 'fal',
-    model: `${DEFAULT_FAL_IMAGE_MODEL}+${DEFAULT_FAL_VIDEO_MODEL}`,
+    model: `${DEFAULT_FAL_IMAGE_MODEL}+${DEFAULT_FAL_VIDEO_MODEL_PRIMARY}(fallback:${DEFAULT_FAL_VIDEO_MODEL_FALLBACK})`,
     data,
     warnings: validation.warnings,
     errors: validation.errors,

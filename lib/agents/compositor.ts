@@ -7,6 +7,7 @@ import type {
   StageUsage,
 } from './types';
 import { getShotstackKey } from '@/lib/providers/shotstack';
+import { createClient } from '@supabase/supabase-js';
 
 export const COMPOSITOR_STAGE = 'compositor' as const;
 export const COMPOSITOR_SCHEMA_VERSION = '1.0' as const;
@@ -20,6 +21,7 @@ export interface ShotstackClip {
   asset: ShotstackAsset;
   start: number;
   length: number;
+  effect?: string;
   transition?: ShotstackTransition;
   offset?: ShotstackOffset;
 }
@@ -28,9 +30,9 @@ export interface ShotstackAsset {
   type: 'video' | 'image' | 'title';
   src?: string;
   text?: string;
-  font?: ShotstackFont;
-  style?: ShotstackStyle;
-  effect?: string; // For Ken Burns zoom effects on images
+  style?: string;
+  size?: string;
+  color?: string;
 }
 
 export interface ShotstackFont {
@@ -241,7 +243,8 @@ function buildShotstackEdit(
   musicTrackId?: string,
 ): ShotstackEdit {
   const assetMap = new Map(videoAssets.scenes.map((s) => [s.scene_id, s]));
-  const tracks: ShotstackTrack[] = [{ clips: [] }];
+  const visualClips: ShotstackClip[] = [];
+  const titleClips: ShotstackClip[] = [];
   let currentTime = 0;
 
   for (let i = 0; i < timedPlan.scenes.length; i++) {
@@ -250,34 +253,48 @@ function buildShotstackEdit(
     const isLast = i === timedPlan.scenes.length - 1;
     const duration = scene.duration_seconds || 5;
 
-    // Determine transition
-    let transitionIn: 'none' | 'crossfade' | 'wipe' = 'none';
-    let transitionOut: 'none' | 'crossfade' | 'wipe' = 'none';
-    if (!isFirst) transitionIn = 'crossfade';
-    if (!isLast) transitionOut = 'crossfade';
+    // Stop-motion paper collages use clean direct cuts — no blackout fade transitions
+    let transitionIn: string | undefined;
+    let transitionOut: string | undefined;
+    if (scene.transition_in && scene.transition_in !== 'cut' && scene.transition_in !== 'none') {
+      transitionIn = scene.transition_in;
+    }
+    if (scene.transition_out && scene.transition_out !== 'cut' && scene.transition_out !== 'none') {
+      transitionOut = scene.transition_out;
+    }
 
     // Asset: video (generated) or image (fallback + Ken Burns)
     let asset: ShotstackAsset;
+    let clipEffect: string | undefined;
     const assetData = videoAssets.scenes.find((a) => a.scene_id === scene.scene_id);
 
-    if (assetData?.status === 'generated' && assetData.video_url) {
+    // Find any real generated image from this job to use as fallback, or use verified public Shotstack S3 asset
+    const fallbackPublicImage =
+      videoAssets.scenes.find((s) => s.image_url && !s.image_url.includes('mock-supabase'))?.image_url ||
+      'https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/images/earth.jpg';
+
+    const hasRealVideo = Boolean(assetData?.video_url && !assetData.video_url.includes('mock-supabase'));
+    const hasRealImage = Boolean(assetData?.image_url && !assetData.image_url.includes('mock-supabase'));
+
+    if (assetData?.status === 'generated' && hasRealVideo) {
       asset = {
         type: 'video',
-        src: assetData.video_url,
+        src: assetData.video_url!,
       };
-    } else if (assetData?.image_url) {
-      // Ken Burns effect via Shotstack image asset with zoom
+    } else if (hasRealImage) {
+      // Ken Burns effect via Shotstack clip effect with zoomIn
       asset = {
         type: 'image',
-        src: assetData.image_url,
-        effect: 'zoomIn',
+        src: assetData.image_url!,
       };
+      clipEffect = 'zoomIn';
     } else {
-      // Fallback placeholder
+      // Fallback placeholder using verified public URL
       asset = {
         type: 'image',
-        src: 'https://shotstack-assets.s3.amazonaws.com/footage/placeholder.jpg',
+        src: fallbackPublicImage,
       };
+      clipEffect = 'zoomIn';
     }
 
     // Video/image clip
@@ -285,16 +302,22 @@ function buildShotstackEdit(
       asset,
       start: currentTime,
       length: duration,
-      transition: {
-        in: transitionIn,
-        out: transitionOut,
-      },
+      effect: clipEffect,
+      ...(transitionIn || transitionOut
+        ? {
+            transition: {
+              in: transitionIn,
+              out: transitionOut,
+            },
+          }
+        : {}),
     };
 
-    // Overlay text clip
+    // Overlay text clip — only render if explicitly enabled (client requested clean collages without digital text overlays)
+    const renderOverlays = (jobConfig as any).render_text_overlay === true;
     const timedScene = timedPlan.scenes.find((s) => s.scene_id === scene.scene_id);
     const overlayText = timedScene?.overlay?.text || '';
-    if (overlayText && overlayText.trim().length > 0) {
+    if (renderOverlays && overlayText && overlayText.trim().length > 0) {
       const overlayStart = timedScene?.overlay?.start_seconds || currentTime + 0.5;
       const overlayEnd = timedScene?.overlay?.end_seconds || currentTime + duration - 0.5;
       const overlayLength = Math.max(0.5, overlayEnd - overlayStart);
@@ -303,24 +326,23 @@ function buildShotstackEdit(
         asset: {
           type: 'title',
           text: overlayText,
-          font: {
-            family: 'Inter',
-            weight: 'bold',
-            size: 48,
-            color: '#FFFFFF',
-            outline: { width: 2, color: '#000000' },
-          },
-          style: { background: 'transparent' },
+          style: 'minimal',
+          size: 'medium',
+          color: '#FFFFFF',
         },
-        start: overlayStart - currentTime, // Relative to track start
+        start: overlayStart,
         length: overlayLength,
       };
-      tracks[0].clips.push(titleClip);
+      titleClips.push(titleClip);
     }
 
-    tracks[0].clips.push(clip);
+    visualClips.push(clip);
     currentTime += duration;
   }
+
+  const tracks: ShotstackTrack[] = titleClips.length > 0
+    ? [{ clips: titleClips }, { clips: visualClips }]
+    : [{ clips: visualClips }];
 
   // Soundtrack
   let soundtrack: ShotstackSoundtrack | undefined;
@@ -359,8 +381,10 @@ function buildShotstackEdit(
 async function callShotstackRender(
   edit: ShotstackEdit,
   apiKey: string,
-): Promise<ShotstackRenderResponse> {
-  const response = await fetch('https://api.shotstack.io/edit/stage/render', {
+): Promise<ShotstackRenderResponse & { baseUrl: string }> {
+  // Try v1 (production) first; fall back to stage (sandbox) if 403
+  let baseUrl = 'https://api.shotstack.io/edit/v1';
+  let response = await fetch(`${baseUrl}/render`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -369,21 +393,35 @@ async function callShotstackRender(
     body: JSON.stringify(edit),
   });
 
+  if (response.status === 403) {
+    baseUrl = 'https://api.shotstack.io/edit/stage';
+    response = await fetch(`${baseUrl}/render`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify(edit),
+    });
+  }
+
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Shotstack render submit failed (${response.status}): ${text}`);
   }
-  return response.json();
+  const data = await response.json();
+  return { ...data, baseUrl };
 }
 
 async function pollShotstackStatus(
   renderId: string,
   apiKey: string,
+  baseUrl: string = 'https://api.shotstack.io/edit/v1',
   maxAttempts: number = 60,
   intervalMs: number = 5000,
 ): Promise<ShotstackStatusResponse> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const response = await fetch(`https://api.shotstack.io/edit/stage/render/${renderId}`, {
+    const response = await fetch(`${baseUrl}/render/${renderId}`, {
       headers: { 'x-api-key': apiKey },
     });
 
@@ -403,18 +441,46 @@ async function pollShotstackStatus(
   throw new Error('Shotstack render timed out');
 }
 
-// ─── Mock Storage Upload ───
+// ─── Storage Upload to Supabase ───
 
-async function mockUploadToSupabase(
+async function uploadToSupabase(
   jobId: string,
   assetType: 'video' | 'image',
+  url: string,
 ): Promise<{ path: string; publicUrl: string }> {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  const bucket = assetType === 'video' ? 'final-videos' : 'thumbnails';
   const ext = assetType === 'video' ? 'mp4' : 'jpg';
-  const path = `${jobId}/final.${ext}`;
-  return {
-    path,
-    publicUrl: `https://mock-supabase.example.com/${path}`,
-  };
+  const path = `${jobId}/silent.${ext}`;
+
+  if (!supabaseUrl || !serviceKey) {
+    return { path, publicUrl: url };
+  }
+
+  try {
+    const supabase = createClient(supabaseUrl, serviceKey);
+    const response = await fetch(url);
+    if (!response.ok) return { path, publicUrl: url };
+    const buffer = await response.arrayBuffer();
+    const contentType = response.headers.get('content-type') || (assetType === 'video' ? 'video/mp4' : 'image/jpeg');
+
+    const { error } = await supabase.storage.from(bucket).upload(path, buffer, {
+      contentType,
+      upsert: true,
+    });
+
+    if (error) {
+      console.warn(`Upload to ${bucket}/${path} failed:`, error.message);
+      return { path, publicUrl: url };
+    }
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+    return { path, publicUrl: data.publicUrl };
+  } catch (err) {
+    console.warn('Supabase storage upload error:', err);
+    return { path, publicUrl: url };
+  }
 }
 
 export async function runCompositor(
@@ -499,23 +565,27 @@ export async function runCompositor(
     if (!renderId) throw new Error('No render ID returned from Shotstack');
 
     // Poll for completion
-    const statusResponse = await pollShotstackStatus(renderId, apiKey);
+    const statusResponse = await pollShotstackStatus(renderId, apiKey, renderResponse.baseUrl);
     const outputUrl = statusResponse.response?.url;
     if (!outputUrl) throw new Error('Shotstack render completed but no output URL');
 
-    // Download and upload to Supabase for durability
-    // In production: fetch outputUrl, upload to Supabase Storage
-    const [videoUpload, thumbnailUpload] = await Promise.all([
-      mockUploadToSupabase(jobConfig.job_id, 'video'),
-      mockUploadToSupabase(jobConfig.job_id, 'image'),
+    const shotstackThumbUrl = outputUrl.replace(/\.mp4$/, '_thumb.jpg');
+
+    // Upload rendered video and thumbnail to Supabase Storage for long-term durability
+    const [videoUpload, thumbUpload] = await Promise.all([
+      uploadToSupabase(jobConfig.job_id, 'video', outputUrl),
+      uploadToSupabase(jobConfig.job_id, 'image', shotstackThumbUrl),
     ]);
+
+    const silentVideoUrl = videoUpload.publicUrl;
+    const thumbnailUrl = thumbUpload.publicUrl;
 
     const totalDuration = timedPlan.scenes.reduce((sum, s) => sum + (s.duration_seconds || 0), 0);
     const fallbackScenes = videoAssets.scenes.filter((s) => s.status === 'fallback_ken_burns').map((s) => s.scene_id);
 
     const data: SilentVideoData = {
-      silent_video_url: videoUpload.publicUrl,
-      thumbnail_url: thumbnailUpload.publicUrl,
+      silent_video_url: silentVideoUrl,
+      thumbnail_url: thumbnailUrl,
       duration_s: Number(totalDuration.toFixed(2)),
       render_id: renderId,
       aspect_ratio: jobConfig.aspect_ratios[0] || '16:9',

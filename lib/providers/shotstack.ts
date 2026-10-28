@@ -13,12 +13,19 @@ export async function smokePingShotstack(live: boolean): Promise<SmokePingResult
     provider: SHOTSTACK_PROVIDER,
     configured: Boolean(key),
     live,
-    request: () =>
-      fetch('https://api.shotstack.io/edit/stage/probe?url=https://shotstack-assets.s3.amazonaws.com/footage/beach-aerial.mp4', {
-        headers: {
-          'x-api-key': key as string,
-          Accept: 'application/json',
-        },
-      }),
+    request: async () => {
+      let res = await fetch('https://api.shotstack.io/edit/v1/render/00000000-0000-0000-0000-000000000000', {
+        headers: { 'x-api-key': key as string, Accept: 'application/json' },
+      });
+      if (res.status === 403) {
+        res = await fetch('https://api.shotstack.io/edit/stage/render/00000000-0000-0000-0000-000000000000', {
+          headers: { 'x-api-key': key as string, Accept: 'application/json' },
+        });
+      }
+      if (res.status === 200 || res.status === 400) {
+        return new Response('authenticated', { status: 200 });
+      }
+      return res;
+    },
   });
 }

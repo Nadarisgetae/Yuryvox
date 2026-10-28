@@ -13,7 +13,9 @@ export type CredentialName = (typeof REQUIRED_LATER)[number];
 export type CredentialPresence = Record<CredentialName, boolean>;
 
 function present(name: string): boolean {
-  const value = process.env[name];
+  let value = process.env[name];
+  if (!value && name === 'SUPABASE_URL') value = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!value && name === 'SUPABASE_ANON_KEY') value = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   return typeof value === 'string' && value.trim().length > 0;
 }
 
@@ -34,7 +36,9 @@ export function isSmokeLiveEnabled(): boolean {
 }
 
 export function getEnv(name: CredentialName): string | null {
-  const value = process.env[name];
+  let value = process.env[name];
+  if (!value && name === 'SUPABASE_URL') value = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!value && name === 'SUPABASE_ANON_KEY') value = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!value || !value.trim()) return null;
   return value.trim();
 }

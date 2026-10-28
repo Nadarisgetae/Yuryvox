@@ -17,7 +17,13 @@ import { getOpenRouterKey } from '@/lib/providers/openrouter';
 export const VISUAL_IDEATOR_STAGE = 'visual_ideator' as const;
 export const VISUAL_IDEATOR_SCHEMA_VERSION = '1.0' as const;
 export const VISUAL_IDEATOR_PROMPT_VERSION = '1.0' as const;
-export const DEFAULT_VISUAL_IDEATOR_MODEL = 'google/gemma-7b-it' as const;
+export const DEFAULT_VISUAL_IDEATOR_MODEL = 'google/gemini-2.5-flash' as const;
+
+export const COLLAGE_STYLE_BLOCK =
+  'hand-cut documentary paper collage on aged newsprint and archival map surfaces, black and white halftone photograph cutouts with rough scissor-cut edges and offset accent strokes, torn paper edges, masking tape fragments, typewriter caption strips, rubber stamp marks, red string and brass pins where the story calls for connections, desaturated archival palette of tan, ink black, and halftone gray with ONE hot red signal accent and a restrained mustard yellow secondary, visible print grain and paper fiber, matte, flat even documentary lighting with soft cutout drop shadows.';
+
+export const COLLAGE_PROMPT_CLOSER =
+  'Every element must appear physically hand-cut and layered from real paper, with visible cutout edges, halftone print texture, and soft shadow separation between layers. The composition stays clean, minimal, and editorial with generous negative space. NOT digital illustration, NOT cartoon, NOT 3D render, NOT glossy, no gradients, no clutter, no watermark, no logos, no text beyond the specified label. Premium documentary collage aesthetic, 16:9, ultra-detailed, 8K.';
 
 const ARCHIVAL_COLLAGE_PALETTE = ['warm ivory', 'cream', 'faded beige', 'charcoal', 'muted ochre', 'selective red'];
 const ARCHIVAL_COLLAGE_TEXTURE = 'aged paper and restrained archival wear';
@@ -250,8 +256,8 @@ export function validateVisualPlanOutput(
       warnings.push(`Scene ${sv.scene_id} overlay text has ${countWords(sv.overlay_text)} words (recommended: max 4).`);
     }
 
-    if (sv.image_prompt && sv.image_prompt.length > 500) {
-      warnings.push(`Scene ${sv.scene_id} image_prompt exceeds 500 chars (${sv.image_prompt.length}).`);
+    if (sv.image_prompt && sv.image_prompt.length > 1000) {
+      warnings.push(`Scene ${sv.scene_id} image_prompt exceeds 1000 chars (${sv.image_prompt.length}).`);
     }
 
     if (script && !sceneIds.has(sv.scene_id)) {
@@ -278,15 +284,28 @@ export function buildVisualIdeatorPrompt(
   systemPrompt: string;
   userPrompt: string;
 } {
-  const systemPrompt = `You are a senior art director for a Vox-style archival-collage explainer video.
+  const systemPrompt = `You are an elite art director and paper collage engineer for a premium Vox-style archival-collage documentary.
 Follow these non-negotiable rules:
 1. Return ONLY a valid JSON object matching the requested schema. No markdown formatting, no code fences, no commentary.
-2. Match the archival_collage_explainer visual preset: warm ivory/cream palettes, aged paper textures, selective red accents, high-contrast compositor-rendered text.
-3. For each scene, specify a concrete visual type, composition, image-generation prompt, and motion direction.
-4. Overlay text: max 4 words. Do not bake essential data, statistics, dates, or logos into generated images.
-5. Never fabricate evidence documents, fake labels, or unsupported historical details.
-6. Provide fallback visuals for failed clip generation (Ken Burns on keyframe).
-7. Maintain visual continuity across scenes while varying treatment when a different format explains the idea more clearly.
+2. Match the archival_collage_explainer visual preset: authentic macro photograph of physical handmade paper cutouts on aged cream paper, fold creases, black-and-white halftone newsprint clippings, crinkled semi-translucent masking tape strips, weathered ink rubber stamps, red wax crayon circles, brass pushpins with red twine, faint coffee cup ring stains, and physical paper relief with soft cast drop shadows underneath.
+3. 70/30 HERO COMPOSITION RULE (CRITICAL):
+   - Every scene must feature ONE dominant hero element at about 70% of visual weight (e.g. an archival object, historical b&w cutout, contour map fragment, or technical schematic).
+   - At most 2 to 3 supporting tactile elements (e.g. masking tape, brass pin with red twine, or rubber stamp).
+   - Generous negative space around all elements. Never illustrate every single word; visualize the core idea behind the words.
+4. RECURRING SUBJECT LAW & BLACK CENSOR BAR:
+   - If a person, object, vehicle, or location recurs across multiple scenes, describe it with IDENTICAL wording every single time it appears so the video reads as one unified documentary film.
+   - For real historical figures: always specify a black censor bar across the eyes in high-contrast b&w halftone print cutout style to preserve investigative documentary realism and prevent AI facial artifacts.
+5. ANTI-SPELLING-MISTAKES & PURE VISUAL STORYTELLING:
+   - AI diffusion models frequently generate garbled letters, misspelled words, and pseudo-lettering slop when asked to draw text.
+   - ALWAYS USE LESS WORDS AND MORE PHYSICAL IMAGES. Visual storytelling must be 100% visual: use iconic archival b&w photographic cutouts, tangible paper silhouette shapes, geographic map landmasses, technical schematics with abstract hatch marks, blank aged ledger textures, and physical artifacts.
+   - NEVER request readable headlines, long quotes, document sentences, or text labels inside image_prompt.
+   - If a numeral is indispensable, limit strictly to a clean 4-digit year (e.g. '1941'). All titles, statistics, and captions will be added by the downstream compositor, never baked into the generated image.
+6. DETAILED PROMPT CRAFTSMANSHIP & MODEL LIMITS:
+   - For image_prompt: Write dense, sensory macro documentary studio photography prompts (100mm macro lens, f/4 aperture, sharp paper fiber edges, 45-degree soft diffused tabletop lighting, natural drop shadows). Keep length strictly between 350 and 700 characters (never exceed 800 characters) to prevent Flux Schnell token truncation.
+   - For video_motion_prompt: Follow the stop-motion paper assembly formula: locked camera (no zoom, pan, tilt, shake, cuts, or transitions). 0 to 65% duration paper pieces slide or drop into place one at a time with subtle bounce and soft shadows, tape presses down, stamps slap on, red string connects pins last (choppy 12fps stop-motion feel). Remaining duration holds finished frame matching image exactly. Keep length strictly between 350 and 600 characters for Kling v1.6.
+7. Never fabricate evidence documents, fake labels, or unsupported historical details.
+8. Provide fallback visuals for failed clip generation (Ken Burns on keyframe).
+9. Maintain visual continuity across scenes while varying treatment when a different format explains the idea more clearly.
 
 Output JSON Schema:
 ${JSON.stringify({
@@ -349,18 +368,19 @@ function buildComposition(scene: {
   const archivalElement = deterministicChoice(index, ARCHIVAL_ELEMENTS);
 
   return {
-    background: `Warm ivory/cream aged paper background, subtle texture, 5% safe margins. ${typeDesc}.`,
-    focal_subject: scene.visual_concept || `Key archival element: ${archivalElement} related to ${topic}.`,
+    background: `Warm ivory/cream aged paper background, tactile kraft paper with fold creases. ${typeDesc}.`,
+    focal_subject: scene.visual_concept || `Key archival element: ${archivalElement} illustrating ${topic}.`,
     supporting_elements: [
-      `Contextual archival materials: ${archivalElement} reinforcing the narration`,
-      'Subtle red accent marker for emphasis only',
-      'Layered paper elements with drop shadow depth',
+      `Contextual archival materials: ${archivalElement} with black-and-white halftone print`,
+      'Strips of crinkled semi-transparent masking tape and rubber ink stamps',
+      'Red wax crayon circle and red twine pinned between brass pushpins',
+      'Layered physical paper elements with natural drop shadow depth',
     ],
     foreground_layers: [
-      `Foreground paper layer reserving space for "${scene.on_screen_text_suggestion}" as compositor overlay`,
-      'Thin red underline accent on key element',
+      'Top-layer torn paper cutouts with soft cast drop shadows',
+      'Adhesive tape strip and dried coffee ring mark',
     ],
-    negative_space: 'Keep bottom 25% of frame clear for compositor-rendered text overlay and captions.',
+    negative_space: 'Natural paper border with 5% safe margins, uncluttered tactile craft arrangement.',
   };
 }
 
@@ -371,30 +391,70 @@ function buildImagePrompt(scene: {
   on_screen_text_suggestion: string;
   claim_ids: string[];
 }, topic: string, visualType: VisualType, artDir: GlobalArtDirection, index: number): string {
-  const typeDesc = ALLOWED_VISUAL_TYPES[visualType as string] || 'archival collage elements';
   const archivalElement = deterministicChoice(index, ARCHIVAL_ELEMENTS);
-  const concept = scene.visual_concept || `Archival collage illustrating: ${scene.narration.substring(0, 100)}`;
+  let subject = scene.visual_concept;
+  if (!subject) {
+    const cleaned = scene.narration.replace(/[^\w\s-]/g, '').trim().split(/\s+/).slice(0, 8).join(' ');
+    subject = cleaned ? `archival visual artifact of ${cleaned}` : `historical artifact representing ${topic}`;
+  }
 
   return truncatePrompt(
-    `Vox-style archival-collage explainer, ${typeDesc}. Visualizes: "${scene.narration}". ` +
-    `Palette: ${artDir.palette.join(', ')}. Texture: ${artDir.texture}. ` +
-    `Composition: ${concept}, with ${archivalElement}. ` +
-    `Background warm ivory, aged paper tone, tactile paper elements with subtle shadows. ` +
-    `Selective red accent for emphasis only. High contrast, clean, no baked-in text. 16:9 aspect ratio, 1920x1080.`
+    `Macro documentary studio photograph of a physical handmade stop-motion paper collage on aged cream kraft paper with subtle fold creases. ` +
+    `Focal hero element (70% visual weight): ${subject}, rendered as a hand-torn black-and-white halftone photograph cutout with rough scissor-cut edges and ${archivalElement}. ` +
+    `Supporting tactile elements: strips of crinkled semi-transparent masking tape, weathered red rubber date stamps, red wax crayon highlight circle, brass pins with red cotton string, dried coffee mug ring mark. ` +
+    `Physical paper relief with soft natural drop shadows underneath each elevated layer, visible torn deckle edges with white paper fibers. ` +
+    `Overhead 45-degree diffused tabletop lighting, generous negative space. Pure visual imagery only, zero legible words, no text lettering, no fake headlines, no misspelled alphabets. ` +
+    `NOT digital illustration, NOT 3D render, no glossy gradients. Premium documentary collage aesthetic, 16:9, ultra-detailed.`,
+    800
   );
+}
+
+export function generateThumbnailPrompts(
+  jobConfig: JobConfig,
+  script: ScriptData,
+): string[] {
+  const topic = jobConfig.topic || 'Documentary Investigation';
+  const hookWords = script.scenes[0]?.on_screen_text_suggestion || 'THE TRUTH';
+  const cleanHook = hookWords.toUpperCase().slice(0, 20);
+
+  return [
+    truncatePrompt(
+      `Dominant hero cutout (70% visual weight): High-contrast black and white halftone photograph cutout of key subject from "${topic}" with rough scissor-cut edges and hot red offset accent stroke, black censor bar across the eyes, set on aged torn newsprint that bleeds off the frame. ` +
+      `Huge condensed bold all-caps headline on a hot red highlight bar: "${cleanHook}". Second smaller weathered stamp-box label: "CLASSIFIED". ` +
+      `One rough red wax marker circle around the hero element. Desaturated tan and carbon ink palette with hot signal red accents, extreme poster-scale contrast, built for mobile readability at 200 pixels. ` +
+      `Every element physically hand-cut from paper with soft shadow separation. NOT digital illustration, NOT 3D render, no logos, 16:9, 8K.`,
+      800
+    ),
+    truncatePrompt(
+      `Dominant hero cutout (70% visual weight): Macro archival folding map with bold red boundary lines and b&w halftone photographic evidence cutout illustrating "${topic}", rough scissor-cut edges, set on scorched aged ledger paper bleeding off frame. ` +
+      `Huge condensed bold headline on a mustard yellow highlight bar: "EXPOSED". Second stamp-box label: "RESTRICTED". ` +
+      `Red cotton twine connecting two brass pushpins across the evidence. High contrast, desaturated archival tan and ink black with hot red accents, poster-scale impact built to read at 200 pixels wide. ` +
+      `Physical paper collage relief with real drop shadows. NOT digital illustration, NOT cartoon, 16:9, ultra-detailed.`,
+      800
+    ),
+    truncatePrompt(
+      `Dominant hero cutout (70% visual weight): Black and white halftone photograph cutout of primary artifact from "${topic}" with black censor bar and rough deckle torn edges, resting on aged newsprint with coffee ring stains. ` +
+      `Huge condensed bold torn-label headline in carbon black on aged cream: "VANISHED". Second red rubber stamp mark: "UNSOLVED". ` +
+      `A single bold red wax crayon arrow pointing directly at the central artifact. Maximum contrast, minimal negative space, extreme mobile thumbnail readability. ` +
+      `Hand-cut layered paper collage aesthetic with tangible depth and soft drop shadows. NOT 3D render, NOT glossy, 16:9, 8K.`,
+      800
+    ),
+  ];
 }
 
 function buildVideoMotionPrompt(scene: {
   narrative_function: string;
   narration: string;
 }, motionDirection: MotionType, topic: string): string {
-  const motionText = motionDirection === 'none'
-    ? 'static still image with subtle texture animation'
-    : `${motionDirection} movement, smooth and restrained`;
-
-  return truncatePrompt(
-    `Animate archival collage for "${topic}": ${scene.narration.substring(0, 60)}. Motion: ${motionText}. ` +
-    `Maintain paper texture, warm ivory backgrounds, selective red accents. 4-6 second clip.`
+  return (
+    `Animate the provided image as a 6-second stop-motion paper collage clip. The provided image is the final frame. ` +
+    `Keep every element exactly as shown. Do not add, remove, redesign, resize, or move anything from its final position. ` +
+    `Camera: completely locked. No zoom, pan, tilt, shake, cuts, or transitions. ` +
+    `0 to 4 seconds: start on bare background paper surface only. Then the paper pieces slide or drop into place one at a time, ` +
+    `back to front, with hero element first. Each piece lands with a small paper bounce and soft shadow. ` +
+    `Tape presses down, stamps slap on, and red string draws from pin to pin last. Use a choppy, hand-made 12fps stop-motion feel, not smooth CGI motion. ` +
+    `4 to 6 seconds: hold the finished frame, matching the provided image exactly. Only slight life remains: ` +
+    `a paper corner lifts a millimeter and the shadows breathe. Nothing moves position.`
   );
 }
 
@@ -426,6 +486,8 @@ function buildGlobalExclusions(): string[] {
   return [
     'No unverified historical document reproductions',
     'No fake labels, dates, or quotes in visual elements',
+    'No legible text, fake headlines, or words rendered in generated images (compositor adds all typography)',
+    'No AI-slop pseudo-lettering, misspelled labels, or garbled alphabets',
     'No exact imitation of living artists',
     'No corporate logos without licensing',
     'No essential data or statistics in generated images (render via compositor)',
@@ -582,8 +644,9 @@ export async function runVisualIdeator(
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
+        response_format: { type: 'json_object' },
         temperature: 0.3,
-        max_tokens: 3000,
+        max_tokens: 8192,
         seed: jobConfig.seed,
       }),
     });
@@ -625,8 +688,45 @@ export async function runVisualIdeator(
 
     const json = await response.json();
     const content = json.choices?.[0]?.message?.content || '';
-    const cleanContent = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-    const parsedData = JSON.parse(cleanContent) as VisualPlanData;
+    let cleanContent = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const firstBrace = cleanContent.indexOf('{');
+    const lastBrace = cleanContent.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleanContent = cleanContent.slice(firstBrace, lastBrace + 1);
+    }
+    let parsedData: VisualPlanData;
+    try {
+      parsedData = JSON.parse(cleanContent) as VisualPlanData;
+    } catch {
+      try {
+        const flattened = cleanContent
+          .replace(/,\s*([\]}])/g, '$1')
+          .replace(/"([^"\\]*(\\.[^"\\]*)*)"/g, (match: string) => {
+            return match.replace(/\r?\n/g, '\\n').replace(/\t/g, '\\t');
+          });
+        parsedData = JSON.parse(flattened) as VisualPlanData;
+      } catch {
+        const mockFallback = generateDeterministicMockVisualPlan(jobConfig, script);
+        const sceneVisuals: SceneVisual[] = [];
+        for (const scene of script.scenes) {
+          const imgMatch = cleanContent.match(new RegExp(`"${scene.scene_id}"[\\s\\S]*?"image_prompt"\\s*:\\s*"([^"]+)"`));
+          const fallback = mockFallback.scene_visuals.find((s) => s.scene_id === scene.scene_id) || mockFallback.scene_visuals[0];
+          sceneVisuals.push({
+            ...fallback,
+            scene_id: scene.scene_id,
+            image_prompt: imgMatch ? imgMatch[1] : fallback.image_prompt,
+            overlay_text: scene.on_screen_text_suggestion || fallback.overlay_text,
+          });
+        }
+        parsedData = {
+          style_preset: jobConfig.visual_preset,
+          global_art_direction: mockFallback.global_art_direction,
+          scene_visuals: sceneVisuals.length > 0 ? sceneVisuals : mockFallback.scene_visuals,
+          global_exclusions: mockFallback.global_exclusions,
+          review_flags: [],
+        };
+      }
+    }
     const validation = validateVisualPlanOutput(parsedData, script);
 
     return {

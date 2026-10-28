@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { configuredCount, getCredentialPresence } from '@/lib/env';
 import { presets } from '@/lib/config';
+import { getStorageDriver } from '@/lib/pipeline/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,7 @@ export async function GET() {
     runtime_target: 'nodejs20.x',
     credentials,
     credential_counts: configuredCount(credentials),
+    storage_driver: getStorageDriver(),
     presets: {
       style: presets.style.id,
       aspect: presets.jobDefaults.aspect_ratios,

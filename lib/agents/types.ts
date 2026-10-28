@@ -323,6 +323,8 @@ export interface FinalVideoData {
   duration_s: number;
   loudness_lufs: number | null;
   true_peak_dbfs: number | null;
+  captions?: CaptionsData;
+  voiceover?: VoiceoverData;
 }
 
 export type FinalVideoEnvelope = StageEnvelope<FinalVideoData>;

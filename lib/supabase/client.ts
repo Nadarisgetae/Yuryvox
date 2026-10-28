@@ -11,6 +11,19 @@ export function getSupabaseBrowserClient(): SupabaseClient | null {
   return createClient(url, anon);
 }
 
+export function getSupabaseServerClient(): SupabaseClient | null {
+  const url = getEnv('SUPABASE_URL');
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const anonKey = getEnv('SUPABASE_ANON_KEY');
+  const key = serviceKey || anonKey;
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
+export function getSupabaseClient(): SupabaseClient | null {
+  return getSupabaseBrowserClient();
+}
+
 export async function smokePingSupabase(live: boolean): Promise<SmokePingResult> {
   const url = getEnv('SUPABASE_URL');
   const anon = getEnv('SUPABASE_ANON_KEY');

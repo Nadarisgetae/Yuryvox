@@ -1,7 +1,13 @@
 # YURYVOX — AGENT OPERATING INSTRUCTIONS
-**Version:** 1.0  
+**Version:** 1.1  
 **Purpose:** Shared operating contract for the seven-agent Yuryvox video-production pipeline  
 **Applies to:** Agent prompts, orchestration code, validators, QA gates, and future provider/model replacements
+**Changelog:**
+- v1.1 (2026-10-25): Agent 5 upgraded from static image + Ken Burns to true image-to-video generation.
+  Primary model: `fal-ai/kling-video/v1.6/standard/image-to-video` (5-6s real motion clips).
+  Secondary fallback: `fal-ai/minimax/video-01/image-to-video`.
+  Ken Burns (Shotstack zoomIn) retained only as last resort when both video models fail.
+  Cost estimate updated to ~$0.05 per 6-second clip (Kling v1.6).
 
 ---
 
@@ -15,7 +21,7 @@ The seven stages are:
 2. **Scriptwriter** — narration and scene-level script.
 3. **Visual Ideator** — scene art direction and asset prompts.
 4. **Timing & Layout** — deterministic durations, layout, transitions, safe zones.
-5. **Video Generator** — images and short clips, with still-image fallback.
+5. **Video Generator** — generates a keyframe image per scene (Fal Flux Schnell), then animates each image into a genuine 5-6 second motion clip (Kling v1.6 image-to-video, primary; Minimax Video-01, fallback). Ken Burns pan/zoom is retained only as a last resort when both video models fail.
 6. **Compositor** — timeline, overlays, transitions, silent visual master.
 7. **Audio Mastering** — narration, captions, audio mix, final video validation.
 
@@ -343,15 +349,21 @@ Turn the approved research angle into a clear, engaging narration script that ex
 ### Required work
 
 1. Establish one central question or thesis.
-2. Build a coherent progression: hook, context, explanation/evidence, implications, and payoff.
-3. Use only the supplied research claims for factual assertions. Each factual sentence or paragraph must map to one or more claim IDs.
-4. Preserve uncertainty, caveats, attribution, dates, and quantities.
-5. Use plain language, explain technical terms, and avoid repetitive restatement.
-6. Write for spoken delivery, not as an academic essay.
-7. Split narration into scenes that each have a clear narrative purpose and a visual opportunity.
-8. Provide concise on-screen text suggestions separately from narration. Avoid putting the entire narration on screen.
-9. Ensure transitions between scenes are logical and the ending resolves the central question.
-10. Calculate the target word count from actual requested runtime and configured narration pace.
+2. **Cold Open Formula (Scene SC01)**: The first 3 to 4 sentences (approx. 30–40 words) MUST open on a **precise date, a named location, and one small concrete action**. No rhetorical throat-clearing, no "imagine this", no rhetorical questions. The story starts *inside a real moment* (e.g., *"November 24, 1971. Portland International Airport. A man in a dark suit pays cash for a one-way ticket to Seattle. He gives the name Dan Cooper."*).
+3. **Calm Precise Documentary Tone**: Mostly short declaratives with one longer explanatory sentence per stretch to vary rhythm. The narrator never editorializes, never exclaims, and never addresses the viewer directly. Tension comes from facts placed in sequence, not adjectives.
+4. **Causal & Temporal Connectives**: Carry the story forward using connectives at paragraph and scene turns: *then, by morning, three days later, within the hour, because of this, which meant, what nobody knew was*. Every beat must feel caused by the previous one.
+5. **Picturable Sentence Rule**: Every sentence ends on a full stop, carries exactly ONE idea, and must be visually picturable as a physical paper collage scene.
+6. Use only the supplied research claims for factual assertions. Each factual sentence or paragraph must map to one or more claim IDs.
+7. Preserve uncertainty, caveats, attribution, dates, and quantities.
+8. Split narration into scenes that each have a clear narrative purpose and a visual opportunity.
+9. Provide concise on-screen text suggestions (maximum 4 words) separately from narration.
+10. **Mandatory Cliffhanger Ending (Payoff Scene)**: The final line must be 12 words or fewer, ending on a noun, name, date, or short declarative using one of five patterns:
+    - **THE UNRESOLVED OBJECT**: Ends on a physical thing that still holds the mystery.
+    - **THE DATED FORWARD JUMP**: Leaps to a later date that reopens the case.
+    - **THE MISSING PIECE**: Names the one thing investigators never got.
+    - **THE QUIET CONTRADICTION**: Ends on a fact that undermines everything before it.
+    - **THE PRICE LINE**: States the human or financial cost flat.
+11. Calculate the target word count from actual requested runtime and configured narration pace.
 
 ### Runtime and scene timing rule
 
@@ -429,16 +441,20 @@ Translate each approved script scene into a visually precise, style-consistent p
 ### Required work
 
 For every scene:
-1. Identify the exact narrative point the image must communicate.
-2. Choose the most useful visual type: archival collage, object cut-out, map, timeline, diagram, chart, illustration, photograph, or restrained motion graphic.
-3. Define foreground, background, focal subject, supporting elements, palette, composition, lighting/texture, and negative space.
-4. Describe an actionable motion idea that can be implemented by the compositor.
-5. Provide a short overlay suggestion, but leave important typography to the compositor.
-6. Maintain recurring design elements, colors, texture, and visual continuity across scenes.
-7. Keep every depicted factual detail traceable to a source or clearly label it as illustrative.
-8. Supply image-generation and image-to-video prompts with explicit composition and aspect ratio.
-9. Define a fallback visual for each scene.
-10. Note any asset that must be supplied by the user or sourced from a licensed source.
+1. Identify the exact narrative point the image must communicate. Never illustrate every single word; visualize the *core idea* behind the words.
+2. **70/30 Hero Composition Rule**: Every scene must feature ONE dominant hero element at approximately 70% of visual weight (e.g. an archival object, historical b&w cutout, contour map fragment, or technical schematic), at most 2 to 3 supporting tactile elements, and generous negative space.
+3. **Recurring Subject Law & Black Censor Bar**: If a person, object, vehicle, or location recurs across multiple scenes, describe it with identical wording every single time it appears so the video reads as one unified documentary film. For real historical figures, always specify a black censor bar across the eyes in high-contrast b&w halftone print cutout style.
+4. **Verbatim Style Block**:
+   > *"hand-cut documentary paper collage on aged newsprint and archival map surfaces, black and white halftone photograph cutouts with rough scissor-cut edges and offset accent strokes, torn paper edges, masking tape fragments, typewriter caption strips, rubber stamp marks, red string and brass pins where the story calls for connections, desaturated archival palette of tan, ink black, and halftone gray with ONE hot red signal accent and a restrained mustard yellow secondary, condensed bold headline lettering only where a label is specified, visible print grain and paper fiber, matte, flat even documentary lighting with soft cutout drop shadows."*
+5. **Verbatim Closer**:
+   > *"Every element must appear physically hand-cut and layered from real paper, with visible cutout edges, halftone print texture, and soft shadow separation between layers. The composition stays clean, minimal, and editorial with generous negative space. NOT digital illustration, NOT cartoon, NOT 3D render, NOT glossy, no gradients, no clutter, no watermark, no logos, no text beyond the specified label. Premium documentary collage aesthetic, 16:9, ultra-detailed, 8K."*
+6. Choose the most useful visual type: archival collage, object cut-out, map, timeline, diagram, chart, illustration, photograph, or restrained motion graphic.
+7. Describe an actionable motion idea that can be implemented by the compositor.
+8. Provide a short overlay suggestion, but leave important typography to the compositor.
+9. Keep every depicted factual detail traceable to a source or clearly label it as illustrative.
+10. Supply image-generation and image-to-video prompts with explicit composition and aspect ratio.
+11. Define a fallback visual for each scene.
+12. **3 High-Impact Thumbnail Prompts**: Generate 3 mobile-feed-optimized (built to read at 200 pixels wide) thumbnail prompts featuring one dominant halftone subject cutout (70% weight, with black censor bar across eyes if a person), maximum 2 text elements of 3 words each in huge condensed all-caps, and one rough red/yellow highlight device (marker circle or highlight bar).
 
 ### Output contract
 
@@ -485,8 +501,9 @@ For every scene:
 - Never create fake evidence that viewers could mistake for a genuine source document.
 - If depicting a real person, place, product, or historical object, avoid adding unsupported distinguishing details.
 - Use a chart only when its data exists in validated input. Never invent chart values or axes.
-- A map must not imply a route, border, or location unsupported by the research.
 - Do not ask an image model to render essential exact text, captions, logos, dates, or statistics. Provide clean background/composition and add exact text later as overlays.
+- **Zero Legible Words & Anti-Spelling-Mistake Rule (Less Words, More Images)**: AI diffusion models frequently generate garbled letters, misspelled words, and pseudo-lettering slop when attempting to draw text. Visual storytelling must be 100% visual: use iconic archival b&w photographic cutouts, tactile paper silhouette shapes, geographic map landmasses, technical schematics with abstract lines/hatches, and tangible artifacts. NEVER request readable headlines, document sentences, quotes, or text labels in `image_prompt`. If a numeral is indispensable, limit strictly to a clean 4-digit year (e.g. '1941'). All titles, captions, and statistics are added cleanly by the downstream compositor, never baked into the generated image.
+- **Model Prompt Length Limits**: Keep `image_prompt` between 350 and 700 characters (hard cap: 800 characters) to prevent token clipping in Flux Schnell. Keep `video_motion_prompt` between 350 and 600 characters (hard cap: 900 characters) for Kling v1.6.
 - Avoid excessive clutter, gratuitous red marks, irrelevant paper scraps, and generic stock-looking compositions.
 - Do not use the same visual treatment for every scene if another format explains the idea more clearly.
 - Do not request an exact imitation of a living artist's style or a protected brand's distinctive artwork. Describe the desired general design attributes instead.
@@ -600,16 +617,37 @@ Generate the visual assets requested by the approved visual plan, using the conf
 
 ### Required work
 
-1. Generate the required image or keyframe for each scene.
-2. Generate a short video clip where it adds meaningful motion and fits budget.
-3. Use image-to-video when a supplied keyframe improves subject/style consistency and the provider supports it.
-4. Record provider, model, prompt version, seed, request ID, asset URL, actual duration, dimensions, format, generation status, and cost.
-5. Verify that returned URLs are accessible to the downstream compositor and remain valid long enough for processing.
-6. Persist durable copies in the configured object storage when permitted and technically supported.
-7. Validate each asset against its scene intent, aspect ratio, content restrictions, and visual continuity.
-8. Use approved fallbacks when generation fails: a still image with restrained pan/zoom, an alternate generated still, or a user-approved replacement.
-9. Report whether a clip is generated video, still image, or fallback; never disguise a fallback in the job metadata.
+1. For each scene, generate a keyframe image using **Fal Flux Schnell** (`fal-ai/flux/schnell`).
+   - Enforce anti-AI-slop macro documentary studio photography of physical handmade paper cutouts on aged cream kraft paper (300gsm cold-press paper with subtle fold creases, authentic black-and-white halftone dot screen prints, crinkled semi-transparent masking tape, weathered red rubber date stamps, red wax crayon circles, brass pins with red twine string, dried coffee cup ring stain, soft natural cast drop shadows underneath elevated layers, visible torn deckle edges with white paper fibers).
+   - **Anti-Spelling-Mistake / Less Words, More Images**: Zero legible words, zero text lettering, no fake headlines, and no misspelled alphabets. Tell the visual story purely through photographic cutouts, physical artifacts, map contours, and tactile textures.
+   - Forbid digital CGI, 3D computer renders, or glossy illustrations.
+   - Keep prompt length strictly within model limits (350–700 chars, hard cap 800 chars).
+2. Animate each keyframe into a genuine stop-motion paper collage clip using **Kling v1.6 image-to-video** (`fal-ai/kling-video/v1.6/standard/image-to-video`) as the primary provider with the **Universal Animation Engine**:
+   - **CAMERA STRICT**: Completely locked camera (no zoom, pan, tilt, rotation, dolly, handheld shake, cuts, or transitions). One continuous static shot from start to finish.
+   - **0 to 65% duration - Build-On Assembly**: Frame opens on the EMPTY background paper surface only (bare aged newsprint, archival grid, or map scaffolding). Elements enter one by one back to front in narrative order: background scraps settle, hero cutout slides in with paper drag and a small settle, supporting cutouts drop on with a 2-frame stamp settle, tape presses down, stamps slap on, red string draws between pins last. Hand-crafted 12fps stop-motion feel on twos, never smooth CGI.
+   - **65% to end - Living Paper Poster**: Holds the finished frame matching the keyframe exactly. Only subtle organic life remains: paper corners lift a millimeter in a draft, halftone dots shimmer faintly, string tension quivers once, shadows breathe. Zero position drift, zero scaling.
+   - **Audio Design Notes**: Close-up paper ASMR (paper sliding, cardstock taps, tape press, stamp thud, string zip, pin click, soft room tone).
+   - Keep motion prompt under 900 characters for optimal Kling adherence.
+   - Request `duration: "5"` (or "10" for scenes > 7s).
+   - Request `aspect_ratio: "16:9"` (or job-configured ratio).
+3. Transitions: Stop-motion paper collages use clean hard cuts between scenes. Never apply fade-to-black or blackout transitions.
+4. If Kling v1.6 fails (rate limit, quota, API error), fall back to **Minimax Video-01** (`fal-ai/minimax/video-01/image-to-video`) with the same stop-motion prompt.
+5. If both video models fail, fall back to a **Ken Burns pan/zoom** (Shotstack `zoomIn` effect on the Flux image). This must be clearly flagged in `status: 'fallback_ken_burns'` and the `warnings` array.
+5. Record provider, model, prompt version, seed, request ID, asset URL, actual duration, dimensions, format, generation status, and cost.
+6. Verify that returned URLs are accessible to the downstream compositor and remain valid long enough for processing.
+7. Persist durable copies in the configured object storage when permitted and technically supported.
+8. Validate each asset against its scene intent, aspect ratio, content restrictions, and visual continuity.
+9. Report whether a clip is generated video (Kling/Minimax), still image Ken Burns, or full fallback; never disguise a fallback in the job metadata.
 10. Limit parallel requests to provider quotas and job budget.
+
+### Provider/model reference (Agent 5)
+
+| Role | Provider | Model/endpoint | Notes |
+|---|---|---|---|
+| Keyframe image | Fal.ai | `fal-ai/flux/schnell` | ~$0.003/image |
+| Video (primary) | Fal.ai | `fal-ai/kling-video/v1.6/standard/image-to-video` | ~$0.05/5s clip |
+| Video (fallback) | Fal.ai | `fal-ai/minimax/video-01/image-to-video` | ~$0.04/clip |
+| Ken Burns (last resort) | Shotstack | `zoomIn` clip effect | No extra cost |
 
 ### Output contract
 

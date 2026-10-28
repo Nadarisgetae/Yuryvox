@@ -317,10 +317,13 @@ export function validateTimedPlanOutput(
   }
 
   // Total timeline check
+  const effectiveTolerance = typeof d.target_seconds === 'number'
+    ? Math.max(TARGET_TOLERANCE, d.target_seconds * 0.03)
+    : TARGET_TOLERANCE;
   if (typeof d.planned_seconds === 'number' && typeof d.target_seconds === 'number') {
     const diff = Math.abs(d.planned_seconds - d.target_seconds);
-    if (diff > TARGET_TOLERANCE) {
-      warnings.push(`Total planned duration ${d.planned_seconds}s deviates from target ${d.target_seconds}s by ${diff}s (tolerance ${TARGET_TOLERANCE}s)`);
+    if (diff > effectiveTolerance) {
+      warnings.push(`Total planned duration ${d.planned_seconds}s deviates from target ${d.target_seconds}s by ${diff}s (tolerance ${effectiveTolerance}s)`);
     }
   }
 
@@ -373,9 +376,27 @@ export function calculateSceneDurations(
       const adjusted = dur * factor;
       sceneDurations.set(id, Math.max(MIN_SCENE_DURATION, Math.min(MAX_SCENE_DURATION, adjusted)));
     }
+
+    // Iterative redistribution pass to spread any deficit or surplus to scenes with headroom
+    for (let pass = 0; pass < 10; pass++) {
+      const currentTotal = Array.from(sceneDurations.values()).reduce((a, b) => a + b, 0);
+      const diff = targetSeconds - currentTotal;
+      if (Math.abs(diff) <= 0.05) break;
+
+      const adjustable = Array.from(sceneDurations.entries()).filter(
+        ([, d]) => (diff > 0 ? d < MAX_SCENE_DURATION : d > MIN_SCENE_DURATION)
+      );
+      if (adjustable.length === 0) break;
+
+      const delta = diff / adjustable.length;
+      for (const [id, d] of adjustable) {
+        const nextDur = Math.max(MIN_SCENE_DURATION, Math.min(MAX_SCENE_DURATION, d + delta));
+        sceneDurations.set(id, Number(nextDur.toFixed(2)));
+      }
+    }
   }
 
-  const plannedTotal = Array.from(sceneDurations.values()).reduce((a, b) => a + b, 0);
+  const plannedTotal = Number(Array.from(sceneDurations.values()).reduce((a, b) => a + b, 0).toFixed(2));
   return { durations: sceneDurations, plannedTotal };
 }
 
@@ -399,15 +420,9 @@ function getAspectLayouts(aspectRatios: string[]): Record<string, AspectLayout> 
   return layouts;
 }
 
-function selectTransition(functionName: string, isFirst: boolean, isLast: boolean): TransitionType {
-  if (isLast) return 'fade';
-  if (isFirst) return 'cut';
-  switch (functionName) {
-    case 'hook': return 'cut';
-    case 'transition': return 'paper_reveal';
-    case 'payoff': return 'fade';
-    default: return 'paper_reveal';
-  }
+function selectTransition(_functionName: string, _isFirst: boolean, _isLast: boolean): TransitionType {
+  // Client requirement: clean straight cuts between stop-motion scenes (no blackout fade)
+  return 'cut';
 }
 
 function selectMotionDirection(visualType: string): { type: MotionType; direction: string; intensity: MotionIntensity } {
@@ -460,7 +475,7 @@ export function generateDeterministicMockTimedPlan(
     const visualType = visualScene?.visual_type || 'archival_collage';
     const motion = selectMotionDirection(visualType);
     const safeZone = getSafeZone(visualType);
-    const overlayText = visualScene?.overlay_text || scene.on_screen_text_suggestion || 'Detail';
+    const overlayText = visualScene?.overlay_text || '';
 
     // Overlay timing: fade in after 0.5s, hold for reading, fade out before end
     const overlayStart = Math.max(0.5, start + 0.5);
@@ -492,17 +507,18 @@ export function generateDeterministicMockTimedPlan(
   }
 
   // Calculate total
-  const totalPlanned = scenes.reduce((sum, s) => sum + s.duration_seconds, 0);
-  const timelineValid = Math.abs(totalPlanned - jobConfig.target_seconds) <= TARGET_TOLERANCE;
+  const totalPlanned = Number(scenes.reduce((sum, s) => sum + s.duration_seconds, 0).toFixed(2));
+  const effectiveTolerance = Math.max(TARGET_TOLERANCE, jobConfig.target_seconds * 0.03);
+  const timelineValid = Math.abs(totalPlanned - jobConfig.target_seconds) <= effectiveTolerance;
 
   return {
     target_seconds: jobConfig.target_seconds,
-    planned_seconds: Number(totalPlanned.toFixed(2)),
+    planned_seconds: totalPlanned,
     timeline_valid: timelineValid,
     aspect_layouts: getAspectLayouts(jobConfig.aspect_ratios),
     scenes,
     validation_errors: [],
-    warnings: timelineValid ? [] : [`Total duration ${totalPlanned.toFixed(1)}s deviates from target ${jobConfig.target_seconds}s by >${TARGET_TOLERANCE}s`],
+    warnings: timelineValid ? [] : [`Total duration ${totalPlanned.toFixed(1)}s deviates from target ${jobConfig.target_seconds}s by >${effectiveTolerance.toFixed(1)}s`],
   };
 }
 

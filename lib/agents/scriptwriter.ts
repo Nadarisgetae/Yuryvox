@@ -3,6 +3,7 @@ import type {
   ResearchData,
   ScriptData,
   ScriptEnvelope,
+  Scene,
   StageError,
 } from './types';
 import { getOpenRouterKey } from '@/lib/providers/openrouter';
@@ -11,7 +12,7 @@ export const SCRIPTWRITER_STAGE = 'scriptwriter' as const;
 export const SCRIPTWRITER_SCHEMA_VERSION = '1.0' as const;
 export const SCRIPTWRITER_PROMPT_VERSION = '1.0' as const;
 export const DEFAULT_PACING_WPM = 145;
-export const DEFAULT_SCRIPTWRITER_MODEL = 'mistralai/mixtral-8x7b-instruct' as const;
+export const DEFAULT_SCRIPTWRITER_MODEL = 'google/gemini-2.5-flash' as const;
 
 export function countWords(text: string): number {
   if (!text || typeof text !== 'string') return 0;
@@ -222,15 +223,25 @@ export function buildScriptwriterPrompt(
   const angle = research.angles.find((a) => a.angle_id === angleId) || research.angles[0];
   const targetWords = calculateTargetWordCount(jobConfig.target_seconds, pacingWpm);
 
-  const systemPrompt = `You are a senior scriptwriter for a Vox-style archival-collage explainer video.
+  const systemPrompt = `You are an elite senior scriptwriter for a premium Vox-style archival-collage explainer documentary.
 Follow these non-negotiable rules:
 1. Return ONLY a valid JSON object matching the requested schema. No markdown formatting, no code fences, no commentary.
-2. Spoken delivery: Write clear, conversational, retention-optimized narration for an explainer video. Not an academic essay.
-3. Target word count: Exactly ${targetWords} words (${jobConfig.target_seconds} seconds at ${pacingWpm} wpm).
-4. Scene timing rule: Split narration into scenes representing 4-8 second visual shots (~10-19 spoken words per scene). Do NOT place 30+ words in a short scene.
-5. Factual integrity: Use ONLY claims from the provided research. Map every factual sentence to its claim_id (e.g. ["C1", "C2"]). Never invent statistics or quotes.
-6. On-screen text: Provide concise text overlay suggestions (maximum 4 words) per scene.
-7. Narrative progression: Hook -> Context -> Explanation -> Evidence -> Transition -> Payoff.
+2. JSON String Syntax: Never use unescaped double quotes inside narration strings (use single quotes 'like this'). Do NOT put raw newlines inside string values. Never use em dashes anywhere (use commas, colons, parentheses, or plain hyphens instead).
+3. Cold Open Formula (Scene SC01): The first 3 to 4 sentences (~30-40 words) MUST open on a precise date, a named location, and one small concrete action. No throat-clearing, no 'imagine this', no rhetorical questions. The story starts inside a real moment (e.g. 'November 24, 1971. Portland International Airport. A man in a dark suit pays cash for a one-way ticket to Seattle.').
+4. Calm Precise Documentary Tone: Mostly short declaratives with one longer explanatory sentence per stretch to vary rhythm. The narrator never editorializes, never exclaims, never addresses the viewer directly. Tension comes from facts placed in sequence, not adjectives.
+5. Causal & Temporal Connectives: Carry the story forward using connectives at scene turns: 'then', 'by morning', 'three days later', 'within the hour', 'because of this', 'which meant', 'what nobody knew was'. Every beat must feel caused by the previous one.
+6. Picturable Sentence Rule: Every sentence must end on a full stop, carry exactly one idea, and be directly picturable as a physical paper collage scene.
+7. Target word count: Exactly ${targetWords} words (${jobConfig.target_seconds} seconds at ${pacingWpm} wpm).
+8. Scene Timing Rule: Split narration into scenes representing 4-8 second visual shots (~10-19 spoken words per scene). Never place 30+ words in a short scene.
+9. Factual Integrity: Use ONLY claims from the provided research. Map every factual sentence to its claim_id (e.g. ["C1", "C2"]). Never invent statistics or quotes.
+10. Mandatory Cliffhanger Ending: The final line of the payoff scene must be 12 words or fewer, ending on a noun, name, date, or short declarative using one of five patterns:
+    - THE UNRESOLVED OBJECT (ends on a physical thing that still holds the mystery)
+    - THE DATED FORWARD JUMP (leaps to a later date that reopens the case)
+    - THE MISSING PIECE (names the one thing investigators never got)
+    - THE QUIET CONTRADICTION (ends on a fact that undermines everything before it)
+    - THE PRICE LINE (states the human or financial cost flat)
+11. On-Screen Text: Provide concise text overlay suggestions (maximum 4 words) per scene.
+12. Narrative Progression: Hook (SC01) -> Context -> Explanation -> Evidence -> Transition -> Payoff.
 
 Output JSON Schema:
 {
@@ -241,7 +252,7 @@ Output JSON Schema:
   "target_word_count": ${targetWords},
   "estimated_duration_seconds": ${jobConfig.target_seconds},
   "runtime_deviation_seconds": 0,
-  "script": "full combined narration text",
+  "script": "single continuous line of combined narration without any line breaks",
   "scenes": [
     {
       "scene_id": "SC01",
@@ -304,99 +315,112 @@ export function generateDeterministicMockScript(
   const claim3 = research.claims[2] || claim1;
   const claim4 = research.claims[3] || claim2;
 
-  // Helper: repeat a filler sentence to pad narration to approximate target word count per scene.
-  // Each scene targets ~15–17 words (4–8s at 145 wpm). We cap at 60 max to satisfy the test bound,
-  // then add extra scenes to reach the overall target word count.
-  const FACTOR = `A key detail here is that ${topicLower(jobConfig.topic)} involves layers of institutional design that are easy to miss on first encounter.`;
-
-  function padScene(text: string, target: number): string {
-    let out = text;
-    while (countWords(out) < target) {
-      out += ' ' + FACTOR;
+  function cleanSceneText(text: string, maxWords: number = 18): string {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    if (words.length <= maxWords) return text;
+    let endIdx = maxWords;
+    for (let i = Math.floor(maxWords * 0.7); i < maxWords; i++) {
+      if (words[i].endsWith('.') || words[i].endsWith(':') || words[i].endsWith(';') || words[i].endsWith('?')) {
+        endIdx = i + 1;
+        break;
+      }
     }
-    // trim to at most target + 5 words to avoid runaway length
-    const words = out.trim().split(/\s+/).filter(Boolean);
-    if (words.length > target + 5) {
-      out = words.slice(0, target + 5).join(' ');
-    }
-    return out;
+    const sliced = words.slice(0, endIdx).join(' ');
+    return sliced.endsWith('.') || sliced.endsWith('?') || sliced.endsWith('!') ? sliced : sliced + '.';
   }
 
-  // Base 7 scenes (core narrative), then compute how many extra "evidence" scenes we need to hit target.
-  const baseScenes = [
+  // Base 7 scenes (core narrative), constrained to ~12–18 words to strictly satisfy 4–8s shot rule
+  const baseScenes: Array<{
+    scene_id: string;
+    narration: string;
+    narrative_function: 'hook' | 'context' | 'explanation' | 'evidence' | 'transition' | 'payoff';
+    claim_ids: string[];
+    on_screen_text_suggestion: string;
+    visual_concept: string;
+  }> = [
     {
       scene_id: 'SC01',
-      narration: padScene(selectedHook, 16),
-      narrative_function: 'hook' as const,
+      narration: cleanSceneText(selectedHook, 18),
+      narrative_function: 'hook',
       claim_ids: claim1 ? [claim1.claim_id] : [],
-      on_screen_text_suggestion: 'The Hidden System',
-      visual_concept: `Aged desk surface with warm spotlight; a worn file folder containing archival documents on ${jobConfig.topic} slides into view.`,
+      on_screen_text_suggestion: 'The Origin Point',
+      visual_concept: `Aged wooden desk with warm overhead spotlight; an archival dossier on ${jobConfig.topic} unfolds with weathered parchment records.`,
     },
     {
       scene_id: 'SC02',
-      narration: padScene(
-        `At first glance, it seems like modern convenience or individual choices dictate the entire system.`,
-        16,
+      narration: cleanSceneText(
+        angle.summary
+          ? `${angle.summary.split('.')[0]}.`
+          : `Long before modern records, diverse societies created striking accounts to explain phenomena they encountered.`,
+        18,
       ),
-      narrative_function: 'context' as const,
+      narrative_function: 'context',
       claim_ids: claim1 ? [claim1.claim_id] : [],
-      on_screen_text_suggestion: 'First Glance',
-      visual_concept: 'Archival black-and-white photographs of daily life, pinned alongside early planning diagrams.',
+      on_screen_text_suggestion: 'Ancient Records',
+      visual_concept: 'Archival monochrome engravings, historical maps, and pinned field notes alongside early handwritten chronicles.',
     },
     {
       scene_id: 'SC03',
-      narration: padScene(
-        `In reality, underlying physical path-dependencies codified decades ago shape nearly every outcome we see today.`,
-        16,
+      narration: cleanSceneText(
+        claim1
+          ? (claim1.claim.endsWith('.') ? claim1.claim : `${claim1.claim}.`)
+          : `Underlying historical patterns codified centuries ago continue to shape cultural understanding today.`,
+        18,
       ),
-      narrative_function: 'explanation' as const,
-      claim_ids: claim1 && claim2 ? [claim1.claim_id, claim2.claim_id] : [],
-      on_screen_text_suggestion: 'Path Dependencies',
-      visual_concept: 'Hand-drawn schematic map unfolding with red ink highlighting key structural junctions.',
+      narrative_function: 'explanation',
+      claim_ids: claim1 ? [claim1.claim_id] : [],
+      on_screen_text_suggestion: 'Core Thesis',
+      visual_concept: 'Hand-drawn map diagram unrolling under glass weights, accented with crimson ink and charcoal markings.',
     },
     {
       scene_id: 'SC04',
-      narration: padScene(
-        `During mid-century regulatory consolidations, planners locked in rigid technical standards that still govern the network.`,
-        16,
+      narration: cleanSceneText(
+        claim2
+          ? (claim2.claim.endsWith('.') ? claim2.claim : `${claim2.claim}.`)
+          : `Physical discoveries and primary artifacts provided tangible foundations for early accounts.`,
+        18,
       ),
-      narrative_function: 'evidence' as const,
-      claim_ids: claim2 ? [claim2.claim_id] : [],
-      on_screen_text_suggestion: '1950s Mandates',
-      visual_concept: 'Typed legislative memorandum with official stamps and paperclips revealed in layers.',
+      narrative_function: 'evidence',
+      claim_ids: claim2 ? [claim2.claim_id] : (claim1 ? [claim1.claim_id] : []),
+      on_screen_text_suggestion: 'Field Evidence',
+      visual_concept: 'Museum specimen plates, excavation field sketches, and catalog cards arranged in chronological layers.',
     },
     {
       scene_id: 'SC05',
-      narration: padScene(
-        `When modern volume surges, these legacy friction points create the bottlenecks that cost billions every year.`,
-        16,
+      narration: cleanSceneText(
+        claim3
+          ? (claim3.claim.endsWith('.') ? claim3.claim : `${claim3.claim}.`)
+          : `When we contrast geographical traditions, surprising divergences emerge across regional cultures.`,
+        18,
       ),
-      narrative_function: 'explanation' as const,
-      claim_ids: claim3 ? [claim3.claim_id] : [],
-      on_screen_text_suggestion: 'Friction Points',
-      visual_concept: 'Flowchart diagram showing capacity limits, accented with tactile paper arrows and charcoal textures.',
+      narrative_function: 'explanation',
+      claim_ids: claim3 ? [claim3.claim_id] : (claim1 ? [claim1.claim_id] : []),
+      on_screen_text_suggestion: 'Divergent Paths',
+      visual_concept: 'Comparative split-screen layout contrasting historical illustrations with period regional chronicles.',
     },
     {
       scene_id: 'SC06',
-      narration: padScene(
-        `Surveys show public perception dramatically underestimates the scale of ongoing maintenance operations.`,
-        16,
+      narration: cleanSceneText(
+        claim4
+          ? (claim4.claim.endsWith('.') ? claim4.claim : `${claim4.claim}.`)
+          : `Detailed archaeological examinations indicate ancient observers systematically synthesized fossil remains into folklore.`,
+        18,
       ),
-      narrative_function: 'evidence' as const,
-      claim_ids: claim4 ? [claim4.claim_id] : [],
-      on_screen_text_suggestion: 'Hidden Ledger',
-      visual_concept: 'Balance sheet excerpt with a magnifying lens focusing on recurring capital expenditure items.',
+      narrative_function: 'evidence',
+      claim_ids: claim4 ? [claim4.claim_id] : (claim2 ? [claim2.claim_id] : []),
+      on_screen_text_suggestion: 'Prehistoric Bones',
+      visual_concept: 'Geological survey map with magnifying glass focusing on strata layers containing prehistoric megafauna fossils.',
     },
     {
       scene_id: 'SC07',
-      narration: padScene(
-        `The lesson is clear: we aren't just using modern technology—we are living inside the blueprints of the past.`,
-        16,
+      narration: cleanSceneText(
+        `Ultimately, examining ${topicLower(jobConfig.topic)} uncovers how human fear and imagination gave rise to enduring global legends.`,
+        18,
       ),
-      narrative_function: 'payoff' as const,
+      narrative_function: 'payoff',
       claim_ids: claim1 ? [claim1.claim_id] : [],
-      on_screen_text_suggestion: 'The Living Blueprint',
-      visual_concept: 'Wide overhead shot pulling back as individual documents assemble into a complete blueprint grid.',
+      on_screen_text_suggestion: 'The Living Myth',
+      visual_concept: 'Wide overhead pull-back shot revealing individual archival records assembling into a complete illustrated tapestry.',
     },
   ];
 
@@ -411,19 +435,45 @@ export function generateDeterministicMockScript(
 
   let estimatedWordCount = countWords(scenes.map((s) => s.narration).join(' '));
 
-  // Add extra evidence scenes until we reach the target word count (±2% tolerance)
+  // Expand with diverse, meaningful claim evidence if more words are required for target duration
+  const extraEvidenceStatements: Array<{ text: string; claimId: string; tag: string; concept: string }> = [
+    ...(research.claims || []).map((c, i) => ({
+      text: c.evidence_summary
+        ? (c.evidence_summary.endsWith('.') ? c.evidence_summary : `${c.evidence_summary}.`)
+        : `Documentary evidence recorded by early observers corroborates this interpretation.`,
+      claimId: c.claim_id,
+      tag: `Evidence ${i + 1}`,
+      concept: `Archival folio containing primary documentation for claim ${c.claim_id}, accented with red annotation.`,
+    })),
+    ...(research.sources || []).map((s, i) => ({
+      text: s.relevant_excerpt_or_summary
+        ? (s.relevant_excerpt_or_summary.endsWith('.') ? s.relevant_excerpt_or_summary : `${s.relevant_excerpt_or_summary}.`)
+        : `Published historical scholarship demonstrates a direct continuity across successive cultural periods.`,
+      claimId: claim1 ? claim1.claim_id : 'C1',
+      tag: `Source ${i + 1}`,
+      concept: `Bookplate engraving from ${s.publisher || 'historical publication'}, showing referenced passages.`,
+    })),
+  ];
+
   let extraIndex = 8;
-  while (estimatedWordCount < targetWords * 0.95 && estimatedWordCount < targetWords) {
+  let evidenceCursor = 0;
+  while (estimatedWordCount < targetWords && extraIndex < 250) {
+    const item = extraEvidenceStatements[evidenceCursor % (extraEvidenceStatements.length || 1)];
+    evidenceCursor++;
+
+    const remainingWords = targetWords - estimatedWordCount;
+    const targetSceneWords = Math.min(18, Math.max(10, remainingWords));
+
+    const rawText = item ? item.text : `Historical analysis reveals how the narrative surrounding ${topicLower(jobConfig.topic)} deepened over generations.`;
+    const narration = cleanSceneText(rawText, targetSceneWords);
+
     const scene = {
       scene_id: `SC${String(extraIndex).padStart(2, '0')}`,
-      narration: padScene(
-        `A supporting detail reveals that ${topicLower(jobConfig.topic)} depends on conventions most people never notice.`,
-        16,
-      ),
+      narration,
       narrative_function: 'evidence' as const,
-      claim_ids: claim1 ? [claim1.claim_id] : [],
-      on_screen_text_suggestion: 'Supporting Detail',
-      visual_concept: `Additional archival material related to ${jobConfig.topic}, displayed on aged paper with selective red highlighting.`,
+      claim_ids: [item?.claimId || (claim1 ? claim1.claim_id : 'C1')],
+      on_screen_text_suggestion: item?.tag || 'Archival Record',
+      visual_concept: item?.concept || `Archival document relating to ${jobConfig.topic}, displayed on aged paper with restrained wear.`,
       pronunciation_notes: [],
       sensitivity_flags: [],
       word_count: 0,
@@ -556,8 +606,9 @@ export async function runScriptwriter(
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
+        response_format: { type: 'json_object' },
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 8192,
         seed: jobConfig.seed,
       }),
     });
@@ -593,8 +644,75 @@ export async function runScriptwriter(
 
     const json = await response.json();
     const content = json.choices?.[0]?.message?.content || '';
-    const cleanContent = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-    const parsedData = JSON.parse(cleanContent) as ScriptData;
+    let cleanContent = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const firstBrace = cleanContent.indexOf('{');
+    const lastBrace = cleanContent.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleanContent = cleanContent.slice(firstBrace, lastBrace + 1);
+    }
+    
+    let parsedData: ScriptData;
+    try {
+      parsedData = JSON.parse(cleanContent) as ScriptData;
+    } catch {
+      try {
+        const sanitized = cleanContent
+          .replace(/,\s*([\]}])/g, '$1')
+          .replace(/"([^"\\]*(\\.[^"\\]*)*)"/g, (match: string) => {
+            return match.replace(/\r?\n/g, '\\n').replace(/\t/g, '\\t');
+          });
+        parsedData = JSON.parse(sanitized) as ScriptData;
+      } catch {
+        const scenes: Scene[] = [];
+        const sceneMatches = cleanContent.matchAll(/"scene_id"\s*:\s*"([^"]+)"[\s\S]*?"narration"\s*:\s*"([\s\S]*?)(?="\s*,\s*"narrative_function)/g);
+        for (const m of sceneMatches) {
+          scenes.push({
+            scene_id: m[1],
+            narration: m[2].replace(/"/g, "'").replace(/\r?\n/g, ' ').trim(),
+            narrative_function: 'explanation',
+            claim_ids: research.claims?.[0] ? [research.claims[0].claim_id] : ['C1'],
+            on_screen_text_suggestion: 'Archival Evidence',
+            visual_concept: 'Tactile archival documents and map evidence.',
+            pronunciation_notes: [],
+            sensitivity_flags: [],
+            word_count: countWords(m[2]),
+            estimated_seconds: calculateDuration(countWords(m[2]), pacingWpm),
+          });
+        }
+
+        const titleMatch = cleanContent.match(/"title"\s*:\s*"([^"]+)"/);
+        const loglineMatch = cleanContent.match(/"logline"\s*:\s*"([^"]+)"/);
+        const thesisMatch = cleanContent.match(/"central_thesis"\s*:\s*"([^"]+)"/);
+
+        if (scenes.length >= 2) {
+          const fullScript = scenes.map((s) => s.narration).join(' ');
+          parsedData = {
+            title: titleMatch ? titleMatch[1] : (research.angles[0]?.title || 'Archival Explainer'),
+            logline: loglineMatch ? loglineMatch[1] : (research.angles[0]?.summary || 'Explainer documentary.'),
+            central_thesis: thesisMatch ? thesisMatch[1] : (research.angles[0]?.central_question || 'Central question.'),
+            estimated_word_count: countWords(fullScript),
+            target_word_count: calculateTargetWordCount(jobConfig.target_seconds, pacingWpm),
+            estimated_duration_seconds: calculateDuration(countWords(fullScript), pacingWpm),
+            runtime_deviation_seconds: 0,
+            script: fullScript,
+            scenes,
+            unresolved_claims: [],
+            editorial_notes: [],
+          };
+        } else {
+          parsedData = generateDeterministicMockScript(jobConfig, research, options.approvedAngleId, pacingWpm);
+        }
+      }
+    }
+
+    if (Array.isArray(parsedData.scenes) && parsedData.scenes.length > 0) {
+      if (!parsedData.script || parsedData.script.trim().length === 0) {
+        parsedData.script = parsedData.scenes.map((s) => s.narration).join(' ');
+      }
+      parsedData.estimated_word_count = countWords(parsedData.script);
+      parsedData.estimated_duration_seconds = calculateDuration(parsedData.estimated_word_count, pacingWpm);
+      parsedData.runtime_deviation_seconds = parsedData.estimated_duration_seconds - jobConfig.target_seconds;
+    }
 
     const validation = validateScriptOutput(parsedData, research, pacingWpm);
     if (!validation.valid) {

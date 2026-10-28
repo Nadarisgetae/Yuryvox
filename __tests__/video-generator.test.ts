@@ -82,14 +82,14 @@ describe('Phase 5: Agent 5 (Video Generator)', () => {
 
   describe('Cost estimation', () => {
     it('calculates cost based on duration', () => {
-      // 4s = 1 image + 1 clip = 0.003 + 0.04 = 0.043
-      expect(estimateSceneCost(4)).toBeCloseTo(0.043, 3);
-      // 6s = 1 image + 2 clips = 0.003 + 0.08 = 0.083
-      expect(estimateSceneCost(6)).toBeCloseTo(0.083, 3);
-      // 8s = 1 image + 2 clips = 0.003 + 0.08 = 0.083
-      expect(estimateSceneCost(8)).toBeCloseTo(0.083, 3);
-      // 12s = 1 image + 3 clips = 0.003 + 0.12 = 0.123
-      expect(estimateSceneCost(12)).toBeCloseTo(0.123, 3);
+      // 4s = 1 image + 1 clip (6s) = 0.003 + 0.05 = 0.053
+      expect(estimateSceneCost(4)).toBeCloseTo(0.053, 3);
+      // 6s = 1 image + 1 clip (6s) = 0.003 + 0.05 = 0.053
+      expect(estimateSceneCost(6)).toBeCloseTo(0.053, 3);
+      // 8s = 1 image + 2 clips = 0.003 + 0.10 = 0.103
+      expect(estimateSceneCost(8)).toBeCloseTo(0.103, 3);
+      // 12s = 1 image + 2 clips = 0.003 + 0.10 = 0.103
+      expect(estimateSceneCost(12)).toBeCloseTo(0.103, 3);
     });
   });
 
